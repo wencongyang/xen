@@ -55,9 +55,10 @@ struct tdaio_state {
 	int                  fd;
 	td_driver_t         *driver;
 
+	int                  aio_max_count;
 	int                  aio_free_count;	
 	struct aio_request   aio_requests[MAX_AIO_REQS];
-	struct aio_request  *aio_free_list[MAX_AIO_REQS];
+	struct aio_request   **aio_free_list;
 };
 
 /*Get Image size, secsize*/
@@ -122,6 +123,11 @@ int tdaio_open(td_driver_t *driver, const char *name, td_flag_t flags)
 
 	memset(prv, 0, sizeof(struct tdaio_state));
 
+	prv->aio_free_list = malloc(MAX_AIO_REQS * sizeof(*prv->aio_free_list));
+	if (!prv->aio_free_list)
+		return -ENOMEM;
+
+	prv->aio_max_count = MAX_AIO_REQS;
 	prv->aio_free_count = MAX_AIO_REQS;
 	for (i = 0; i < MAX_AIO_REQS; i++)
 		prv->aio_free_list[i] = &prv->aio_requests[i];
@@ -157,6 +163,28 @@ int tdaio_open(td_driver_t *driver, const char *name, td_flag_t flags)
 
 done:
 	return ret;	
+}
+
+static int tdaio_refill(struct tdaio_state *prv)
+{
+	struct aio_request **new, *new_req;
+	int i, max = prv->aio_max_count + MAX_AIO_REQS;
+
+	new = realloc(prv->aio_free_list, max * sizeof(*prv->aio_free_list));
+	if (!new)
+		return -1;
+	prv->aio_free_list = new;
+
+	new_req = calloc(MAX_AIO_REQS, sizeof(*new_req));
+	if (!new_req)
+		return -1;
+
+	prv->aio_max_count = max;
+	prv->aio_free_count = MAX_AIO_REQS;
+	for (i = 0; i < MAX_AIO_REQS; i++)
+		prv->aio_free_list[i] = &new_req[i];
+
+	return 0;
 }
 
 void tdaio_complete(void *arg, struct tiocb *tiocb, int err)
@@ -207,8 +235,10 @@ void tdaio_queue_write(td_driver_t *driver, td_request_t treq)
 	size    = treq.secs * driver->info.sector_size;
 	offset  = treq.sec  * (uint64_t)driver->info.sector_size;
 
-	if (prv->aio_free_count == 0)
-		goto fail;
+	if (prv->aio_free_count == 0) {
+		if (tdaio_refill(prv) < 0)
+			goto fail;
+	}
 
 	aio        = prv->aio_free_list[--prv->aio_free_count];
 	aio->treq  = treq;
