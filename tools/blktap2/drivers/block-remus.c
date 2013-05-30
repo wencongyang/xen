@@ -599,7 +599,7 @@ static int ramdisk_start_flush(td_driver_t *driver)
 		}
 		free(sectors);
 
-		hashtable_destroy (s->ramdisk.h, 0);
+		hashtable_destroy (s->ramdisk.h, 1);
 	} else
 		s->ramdisk.prev = s->ramdisk.h;
 
