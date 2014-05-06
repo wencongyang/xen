@@ -526,6 +526,13 @@ static int vmx_vmcs_restore(struct vcpu *v, struct hvm_hw_cpu *c)
             vmx_vmcs_exit(v);
         }
     }
+    else
+    {
+        vmx_vmcs_enter(v);
+        __vmwrite(VM_ENTRY_INTR_INFO, 0);
+        __vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE, 0);
+        vmx_vmcs_exit(v);
+    }
 
     return 0;
 }
