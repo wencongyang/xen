@@ -812,7 +812,8 @@ int static inline libxl_domain_create_restore_0x040200(
     LIBXL_EXTERNAL_CALLERS_ONLY
 {
     libxl_domain_restore_params params;
-    params.checkpointed_stream = 0;
+    params.checkpointed_stream = LIBXL_CHECKPOINTED_STREAM_NONE;
+    params.send_fd = -1;
 
     return libxl_domain_create_restore(
         ctx, d_config, domid, restore_fd, &params, ao_how, aop_console_how);
