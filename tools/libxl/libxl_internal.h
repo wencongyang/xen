@@ -2093,6 +2093,36 @@ void libxl__async_exec_init(libxl__async_exec_state *aes);
 int libxl__async_exec_start(libxl__gc *gc, libxl__async_exec_state *aes);
 bool libxl__async_exec_inuse(const libxl__async_exec_state *aes);
 
+/*----- datareader: read data from one fd to buffer -----*/
+
+typedef struct libxl__datareader_state libxl__datareader_state;
+
+/*
+ * real_size>=1 means all data was read
+ * real_size==0 means failure happened when reading, errnoval is valid, logged
+ * real_size==-1 means some other internal failure, errnoval not valid, logged
+ * In all cases reader is killed before calling this callback
+ */
+typedef void libxl__datareader_callback(libxl__egc *egc,
+     libxl__datareader_state *drs, ssize_t real_size, int errnoval);
+
+struct libxl__datareader_state {
+    /* caller must fill these in, and they must all remain valid */
+    libxl__ao *ao;
+    int readfd;
+    ssize_t readsize;
+    /* for error msgs */
+    const char *readwhat;
+    libxl__datareader_callback *callback;
+    /* It must contain enough space to store readsize bytes */
+    void *buf;
+    /* remaining fields are private to datareader */
+    libxl__ev_fd toread;
+    ssize_t used;
+};
+
+_hidden int libxl__datareader_start(libxl__datareader_state *drs);
+
 /*----- device addition/removal -----*/
 
 typedef struct libxl__ao_device libxl__ao_device;
