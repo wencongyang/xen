@@ -2389,7 +2389,7 @@ new_checkpoint:
     } while (0)
         /* COLO */
 
-        /* TODO: call restore_results */
+        callbacks->restore_results(*store_mfn, *console_mfn, callbacks->data);
 
         /* Resume secondary vm */
         frc = callbacks->postcopy(callbacks->data);
