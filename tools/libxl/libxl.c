@@ -466,7 +466,8 @@ int libxl_domain_rename(libxl_ctx *ctx, uint32_t domid,
     return rc;
 }
 
-int libxl__domain_resume(libxl__gc *gc, uint32_t domid, int suspend_cancel)
+int libxl__domain_resume(libxl__gc *gc, uint32_t domid,
+                         int suspend_cancel, int read_savefile)
 {
     int rc = 0;
 
@@ -483,7 +484,7 @@ int libxl__domain_resume(libxl__gc *gc, uint32_t domid, int suspend_cancel)
     }
 
     if (type == LIBXL_DOMAIN_TYPE_HVM) {
-        rc = libxl__domain_resume_device_model(gc, domid);
+        rc = libxl__domain_resume_device_model(gc, domid, read_savefile);
         if (rc) {
             LOG(ERROR, "failed to resume device model for domain %u:%d",
                 domid, rc);
@@ -503,7 +504,7 @@ int libxl_domain_resume(libxl_ctx *ctx, uint32_t domid, int suspend_cancel,
                         const libxl_asyncop_how *ao_how)
 {
     AO_CREATE(ctx, domid, ao_how);
-    int rc = libxl__domain_resume(gc, domid, suspend_cancel);
+    int rc = libxl__domain_resume(gc, domid, suspend_cancel, 0);
     libxl__ao_complete(egc, ao, rc);
     return AO_INPROGRESS;
 }

@@ -1091,16 +1091,34 @@ int libxl__domain_suspend_device_model(libxl__gc *gc,
     return ret;
 }
 
-int libxl__domain_resume_device_model(libxl__gc *gc, uint32_t domid)
+int libxl__domain_resume_device_model(libxl__gc *gc, uint32_t domid,
+                                      int read_savefile)
 {
 
     switch (libxl__device_model_version_running(gc, domid)) {
     case LIBXL_DEVICE_MODEL_VERSION_QEMU_XEN_TRADITIONAL: {
-        libxl__qemu_traditional_cmd(gc, domid, "continue");
+        if (read_savefile)
+            libxl__qemu_traditional_cmd(gc, domid, "resume");
+        else
+            libxl__qemu_traditional_cmd(gc, domid, "continue");
         libxl__wait_for_device_model_deprecated(gc, domid, "running", NULL, NULL, NULL);
         break;
     }
     case LIBXL_DEVICE_MODEL_VERSION_QEMU_XEN:
+        if (read_savefile) {
+            char *state_file;
+            int rc;
+
+            state_file = libxl__sprintf(NOGC,
+                                        XC_DEVICE_MODEL_RESTORE_FILE".%d",
+                                        domid);
+            /* This command only restores the device state */
+            rc = libxl__qmp_restore(gc, domid, state_file);
+            free(state_file);
+            if (rc)
+                return ERROR_FAIL;
+        }
+
         if (libxl__qmp_resume(gc, domid))
             return ERROR_FAIL;
         break;
@@ -1591,7 +1609,7 @@ static void remus_devices_preresume_cb(libxl__egc *egc,
         goto out;
 
     /* Resumes the domain and the device model */
-    if (!libxl__domain_resume(gc, dss->domid, /* Fast Suspend */1))
+    if (!libxl__domain_resume(gc, dss->domid, /* Fast Suspend */1, 0))
         ok = 1;
 
 out:
