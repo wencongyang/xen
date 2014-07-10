@@ -969,9 +969,8 @@ out:
     return AO_INPROGRESS;
 }
 
-int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
+int libxl__domain_unpause(libxl__gc *gc, uint32_t domid)
 {
-    GC_INIT(ctx);
     char *path;
     char *state;
     int ret, rc = 0;
@@ -991,12 +990,22 @@ int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
                                          NULL, NULL, NULL);
         }
     }
-    ret = xc_domain_unpause(ctx->xch, domid);
-    if (ret<0) {
-        LIBXL__LOG_ERRNO(ctx, LIBXL__LOG_ERROR, "unpausing domain %d", domid);
+
+    ret = xc_domain_unpause(CTX->xch, domid);
+    if (ret < 0) {
+        LOGE(ERROR, "unpausing domain %d", domid);
         rc = ERROR_FAIL;
     }
- out:
+
+out:
+    return rc;
+}
+
+int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
+{
+    GC_INIT(ctx);
+    int rc = libxl__domain_unpause(gc, domid);
+
     GC_FREE;
     return rc;
 }
