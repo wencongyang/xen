@@ -67,10 +67,11 @@ static void device_teardown_cb(libxl__egc *egc,
 /* checkpoint device setup and teardown */
 
 static void libxl__checkpoint_device_init(libxl__egc *egc,
-                                     libxl__checkpoint_device_state *cds,
-                                     libxl__checkpoint_device_kind kind,
-                                     void *libxl_dev);
-void libxl__checkpoint_devices_setup(libxl__egc *egc, libxl__checkpoint_device_state *cds)
+                                          libxl__checkpoint_device_state *cds,
+                                          libxl__checkpoint_device_kind kind,
+                                          void *libxl_dev);
+void libxl__checkpoint_devices_setup(libxl__egc *egc,
+                                     libxl__checkpoint_device_state *cds)
 {
     int i;
     STATE_AO_GC(cds->ao);
@@ -99,12 +100,14 @@ void libxl__checkpoint_devices_setup(libxl__egc *egc, libxl__checkpoint_device_s
 
     for (i = 0; i < cds->num_nics; i++) {
         libxl__checkpoint_device_init(egc, cds,
-                                 LIBXL__CHECKPOINT_DEVICE_NIC, &cds->nics[i]);
+                                      LIBXL__CHECKPOINT_DEVICE_NIC,
+                                      &cds->nics[i]);
     }
 
     for (i = 0; i < cds->num_disks; i++) {
         libxl__checkpoint_device_init(egc, cds,
-                                 LIBXL__CHECKPOINT_DEVICE_DISK, &cds->disks[i]);
+                                      LIBXL__CHECKPOINT_DEVICE_DISK,
+                                      &cds->disks[i]);
     }
 
     return;
@@ -115,9 +118,9 @@ out:
 }
 
 static void libxl__checkpoint_device_init(libxl__egc *egc,
-                                     libxl__checkpoint_device_state *cds,
-                                     libxl__checkpoint_device_kind kind,
-                                     void *libxl_dev)
+                                          libxl__checkpoint_device_state *cds,
+                                          libxl__checkpoint_device_kind kind,
+                                          void *libxl_dev)
 {
     libxl__checkpoint_device *dev = NULL;
 
@@ -234,7 +237,8 @@ static void device_setup_cb(libxl__egc *egc,
         cds->callback(egc, cds, cds->saved_rc);
 }
 
-void libxl__checkpoint_devices_teardown(libxl__egc *egc, libxl__checkpoint_device_state *cds)
+void libxl__checkpoint_devices_teardown(libxl__egc *egc,
+                                        libxl__checkpoint_device_state *cds)
 {
     int i, num_set_up;
     libxl__checkpoint_device *dev;
@@ -309,12 +313,12 @@ static void device_checkpoint_cb(libxl__egc *egc,
 
 /* API implementations */
 
-#define define_checkpoint_device_api(api)                             \
-void libxl__checkpoint_devices_##api(libxl__egc *egc,                            \
-                                libxl__checkpoint_device_state *cds)             \
+#define define_checkpoint_device_api(api)                                   \
+void libxl__checkpoint_devices_##api(libxl__egc *egc,                       \
+                                libxl__checkpoint_device_state *cds)        \
 {                                                                           \
     int i;                                                                  \
-    libxl__checkpoint_device *dev;                                               \
+    libxl__checkpoint_device *dev;                                          \
                                                                             \
     STATE_AO_GC(cds->ao);                                                   \
                                                                             \

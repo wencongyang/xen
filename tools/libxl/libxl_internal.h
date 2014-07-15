@@ -2600,8 +2600,8 @@ struct libxl__checkpoint_device_state {
 };
 
 typedef void libxl__checkpoint_device_callback(libxl__egc *,
-                                          libxl__checkpoint_device *,
-                                          int rc);
+                                               libxl__checkpoint_device *,
+                                               int rc);
 /*
  * This structure is init and setup by remus device abstruct layer,
  * and pass to remus device ops
@@ -2638,15 +2638,15 @@ struct libxl__checkpoint_device {
 
 /* the following 5 APIs are async ops, call cds->callback when done */
 _hidden void libxl__checkpoint_devices_setup(libxl__egc *egc,
-                                        libxl__checkpoint_device_state *cds);
+                                             libxl__checkpoint_device_state *cds);
 _hidden void libxl__checkpoint_devices_teardown(libxl__egc *egc,
-                                           libxl__checkpoint_device_state *cds);
+                                                libxl__checkpoint_device_state *cds);
 _hidden void libxl__checkpoint_devices_postsuspend(libxl__egc *egc,
-                                              libxl__checkpoint_device_state *cds);
+                                                   libxl__checkpoint_device_state *cds);
 _hidden void libxl__checkpoint_devices_preresume(libxl__egc *egc,
-                                            libxl__checkpoint_device_state *cds);
+                                                 libxl__checkpoint_device_state *cds);
 _hidden void libxl__checkpoint_devices_commit(libxl__egc *egc,
-                                         libxl__checkpoint_device_state *cds);
+                                              libxl__checkpoint_device_state *cds);
 
 extern const libxl__checkpoint_device_subkind_ops remus_device_nic;
 extern const libxl__checkpoint_device_subkind_ops remus_device_drbd_disk;
