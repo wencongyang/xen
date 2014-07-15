@@ -33,12 +33,12 @@ typedef struct libxl__remus_drbd_disk {
 } libxl__remus_drbd_disk;
 
 /*----- helper functions, for async calls -----*/
-static void drbd_async_call(libxl__remus_device *dev,
-                            void func(libxl__remus_device *),
+static void drbd_async_call(libxl__checkpoint_device *dev,
+                            void func(libxl__checkpoint_device *),
                             libxl__ev_child_callback callback)
 {
     int pid = -1;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     /* Fork and call */
     pid = libxl__ev_child_fork(gc, &dev->child, callback);
@@ -57,15 +57,15 @@ static void drbd_async_call(libxl__remus_device *dev,
     return;
 
 out:
-    dev->callback(dev->rds->egc, dev, ERROR_FAIL);
+    dev->callback(dev->cds->egc, dev, ERROR_FAIL);
 }
 
 /*----- init() and destroy() -----*/
-static int drbd_init(libxl__remus_device_state *rds)
+static int drbd_init(libxl__checkpoint_device_state *cds)
 {
     libxl__remus_drbd_state *drbd_state;
 
-    STATE_AO_GC(rds->ao);
+    STATE_AO_GC(cds->ao);
 
     GCNEW(drbd_state);
     CTX->drbd_state = drbd_state;
@@ -76,7 +76,7 @@ static int drbd_init(libxl__remus_device_state *rds)
     return 0;
 }
 
-static void drbd_destroy(libxl__remus_device_state *rds)
+static void drbd_destroy(libxl__checkpoint_device_state *cds)
 {
     return;
 }
@@ -90,12 +90,12 @@ static void match_async_exec_cb(libxl__egc *egc,
 
 /* implementations */
 
-static void match_async_exec(libxl__egc *egc, libxl__remus_device *dev)
+static void match_async_exec(libxl__egc *egc, libxl__checkpoint_device *dev)
 {
     int arraysize, nr = 0;
     const libxl_device_disk *disk = dev->backend_dev;
     libxl__async_exec_state *aes = &dev->aes;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     libxl__remus_drbd_state *drbd_state = CTX->drbd_state;
     /* setup env & args */
@@ -129,29 +129,29 @@ out:
     dev->callback(egc, dev, ERROR_FAIL);
 }
 
-static void drbd_match(libxl__remus_device *dev)
+static void drbd_match(libxl__checkpoint_device *dev)
 {
-    match_async_exec(dev->rds->egc, dev);
+    match_async_exec(dev->cds->egc, dev);
 }
 
 static void match_async_exec_cb(libxl__egc *egc,
                                 libxl__async_exec_state *aes,
                                 int status)
 {
-    libxl__remus_device *dev = CONTAINER_OF(aes, *dev, aes);
+    libxl__checkpoint_device *dev = CONTAINER_OF(aes, *dev, aes);
 
     if (status) {
-        dev->callback(egc, dev, ERROR_REMUS_DEVOPS_NOT_MATCH);
+        dev->callback(egc, dev, ERROR_CHECKPOINT_DEVOPS_NOT_MATCH);
     } else {
         dev->callback(egc, dev, 0);
     }
 }
 
-static void drbd_setup(libxl__remus_device *dev)
+static void drbd_setup(libxl__checkpoint_device *dev)
 {
     libxl__remus_drbd_disk *drbd_disk;
     const libxl_device_disk *disk = dev->backend_dev;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     GCNEW(drbd_disk);
     dev->data = drbd_disk;
@@ -159,17 +159,17 @@ static void drbd_setup(libxl__remus_device *dev)
     drbd_disk->ackwait = 0;
     drbd_disk->ctl_fd = open(drbd_disk->path, O_RDONLY);
     if (drbd_disk->ctl_fd < 0)
-        dev->callback(dev->rds->egc, dev, ERROR_FAIL);
+        dev->callback(dev->cds->egc, dev, ERROR_FAIL);
     else
-        dev->callback(dev->rds->egc, dev, 0);
+        dev->callback(dev->cds->egc, dev, 0);
 }
 
-static void drbd_teardown(libxl__remus_device *dev)
+static void drbd_teardown(libxl__checkpoint_device *dev)
 {
     libxl__remus_drbd_disk *drbd_disk = dev->data;
 
     close(drbd_disk->ctl_fd);
-    dev->callback(dev->rds->egc, dev, 0);
+    dev->callback(dev->cds->egc, dev, 0);
 }
 
 /*----- checkpointing APIs -----*/
@@ -182,7 +182,7 @@ static void chekpoint_async_call_done(libxl__egc *egc,
 /* API implementations */
 
 /* this op will not wait and block, so implement as sync op */
-static void drbd_postsuspend(libxl__remus_device *dev)
+static void drbd_postsuspend(libxl__checkpoint_device *dev)
 {
     libxl__remus_drbd_disk *rdd = dev->data;
 
@@ -191,10 +191,10 @@ static void drbd_postsuspend(libxl__remus_device *dev)
             rdd->ackwait = 1;
     }
 
-    dev->callback(dev->rds->egc, dev, 0);
+    dev->callback(dev->cds->egc, dev, 0);
 }
 
-static void drbd_preresume_async(libxl__remus_device *dev)
+static void drbd_preresume_async(libxl__checkpoint_device *dev)
 {
     libxl__remus_drbd_disk *rdd = dev->data;
     int ackwait = rdd->ackwait;
@@ -207,7 +207,7 @@ static void drbd_preresume_async(libxl__remus_device *dev)
     _exit(ackwait);
 }
 
-static void drbd_preresume(libxl__remus_device *dev)
+static void drbd_preresume(libxl__checkpoint_device *dev)
 {
     drbd_async_call(dev, drbd_preresume_async, chekpoint_async_call_done);
 }
@@ -216,9 +216,9 @@ static void chekpoint_async_call_done(libxl__egc *egc,
                                       libxl__ev_child *child,
                                       pid_t pid, int status)
 {
-    libxl__remus_device *dev = CONTAINER_OF(child, *dev, child);
+    libxl__checkpoint_device *dev = CONTAINER_OF(child, *dev, child);
     libxl__remus_drbd_disk *rdd = dev->data;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     if (WIFEXITED(status)) {
         rdd->ackwait = WEXITSTATUS(status);
@@ -228,8 +228,8 @@ static void chekpoint_async_call_done(libxl__egc *egc,
     }
 }
 
-const libxl__remus_device_subkind_ops remus_device_drbd_disk = {
-    .kind = LIBXL__REMUS_DEVICE_DISK,
+const libxl__checkpoint_device_subkind_ops remus_device_drbd_disk = {
+    .kind = LIBXL__CHECKPOINT_DEVICE_DISK,
     .init = drbd_init,
     .destroy = drbd_destroy,
     .match = drbd_match,

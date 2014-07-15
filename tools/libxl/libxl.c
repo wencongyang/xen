@@ -782,13 +782,13 @@ out:
 }
 
 static void libxl__remus_setup_done(libxl__egc *egc,
-                                    libxl__remus_device_state *rds, int rc);
+                                    libxl__checkpoint_device_state *cds, int rc);
 static void libxl__remus_setup_failed(libxl__egc *egc,
-                                      libxl__remus_device_state *rds, int rc);
+                                      libxl__checkpoint_device_state *cds, int rc);
 static void remus_failover_cb(libxl__egc *egc,
                               libxl__domain_suspend_state *dss, int rc);
 
-static const libxl__remus_device_subkind_ops *remus_ops[] = {
+static const libxl__checkpoint_device_subkind_ops *remus_ops[] = {
     &remus_device_nic,
     &remus_device_drbd_disk,
     NULL,
@@ -823,7 +823,7 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
     assert(info);
 
     /* Convenience aliases */
-    libxl__remus_device_state *const rds = &dss->rds;
+    libxl__checkpoint_device_state *const cds = &dss->cds;
 
     if (info->netbuf) {
         if (!libxl__netbuffer_enabled(gc)) {
@@ -841,18 +841,18 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
         }
     }
 
-    rds->ao = ao;
-    rds->egc = egc;
-    rds->domid = domid;
-    rds->callback = libxl__remus_setup_done;
-    rds->ops = remus_ops;
+    cds->ao = ao;
+    cds->egc = egc;
+    cds->domid = domid;
+    cds->callback = libxl__remus_setup_done;
+    cds->ops = remus_ops;
     if (info->diskbuf)
-        rds->enabled_device_kinds |= LIBXL__REMUS_DEVICE_DISK;
+        cds->enabled_device_kinds |= LIBXL__CHECKPOINT_DEVICE_DISK;
     if (info->netbuf)
-        rds->enabled_device_kinds |= LIBXL__REMUS_DEVICE_NIC;
+        cds->enabled_device_kinds |= LIBXL__CHECKPOINT_DEVICE_NIC;
 
     /* Point of no return */
-    libxl__remus_devices_setup(egc, rds);
+    libxl__checkpoint_devices_setup(egc, cds);
     return AO_INPROGRESS;
 
  out:
@@ -860,9 +860,9 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
 }
 
 static void libxl__remus_setup_done(libxl__egc *egc,
-                                    libxl__remus_device_state *rds, int rc)
+                                    libxl__checkpoint_device_state *cds, int rc)
 {
-    libxl__domain_suspend_state *dss = CONTAINER_OF(rds, *dss, rds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
     STATE_AO_GC(dss->ao);
 
     if (!rc) {
@@ -872,14 +872,14 @@ static void libxl__remus_setup_done(libxl__egc *egc,
 
     LOG(ERROR, "Remus: failed to setup device for guest with domid %u, rc %d",
         dss->domid, rc);
-    rds->callback = libxl__remus_setup_failed;
-    libxl__remus_devices_teardown(egc, rds);
+    cds->callback = libxl__remus_setup_failed;
+    libxl__checkpoint_devices_teardown(egc, cds);
 }
 
 static void libxl__remus_setup_failed(libxl__egc *egc,
-                                      libxl__remus_device_state *rds, int rc)
+                                      libxl__checkpoint_device_state *cds, int rc)
 {
-    libxl__domain_suspend_state *dss = CONTAINER_OF(rds, *dss, rds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
     STATE_AO_GC(dss->ao);
 
     if (rc)

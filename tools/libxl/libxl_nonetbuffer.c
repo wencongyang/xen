@@ -22,25 +22,25 @@ int libxl__netbuffer_enabled(libxl__gc *gc)
     return 0;
 }
 
-static void nic_match(libxl__remus_device *dev)
+static void nic_match(libxl__checkpoint_device *dev)
 {
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
-    dev->callback(dev->rds->egc, dev, ERROR_FAIL);
+    dev->callback(dev->cds->egc, dev, ERROR_FAIL);
 }
 
-static int nic_init(libxl__remus_device_state *rds)
+static int nic_init(libxl__checkpoint_device_state *cds)
 {
     return 0;
 }
 
-static void nic_destroy(libxl__remus_device_state *rds)
+static void nic_destroy(libxl__checkpoint_device_state *cds)
 {
     return;
 }
 
-const libxl__remus_device_subkind_ops remus_device_nic = {
-    .kind = LIBXL__REMUS_DEVICE_NIC,
+const libxl__checkpoint_device_subkind_ops remus_device_nic = {
+    .kind = LIBXL__CHECKPOINT_DEVICE_NIC,
     .init = nic_init,
     .destroy = nic_destroy,
     .match = nic_match,

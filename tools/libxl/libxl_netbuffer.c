@@ -34,12 +34,12 @@ struct libxl__remus_netbuf_state {
     struct nl_cache *qdisc_cache;
 };
 
-typedef struct libxl__remus_device_nic {
+typedef struct libxl__checkpoint_device_nic {
     int devid;
     const char *vif;
     const char *ifb;
     struct rtnl_qdisc *qdisc;
-} libxl__remus_device_nic;
+} libxl__checkpoint_device_nic;
 
 int libxl__netbuffer_enabled(libxl__gc *gc)
 {
@@ -48,13 +48,13 @@ int libxl__netbuffer_enabled(libxl__gc *gc)
 
 /*----- init() and destroy() -----*/
 
-static int nic_init(libxl__remus_device_state *rds)
+static int nic_init(libxl__checkpoint_device_state *cds)
 {
     int rc, ret;
     libxl__remus_netbuf_state *ns;
-    libxl__domain_suspend_state *dss = CONTAINER_OF(rds, *dss, rds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
 
-    STATE_AO_GC(rds->ao);
+    STATE_AO_GC(cds->ao);
 
     GCNEW(ns);
     CTX->rns = ns;
@@ -83,8 +83,8 @@ static int nic_init(libxl__remus_device_state *rds)
         goto out;
     }
 
-    ns->ao = rds->ao;
-    ns->domid = rds->domid;
+    ns->ao = cds->ao;
+    ns->domid = cds->domid;
     ns->netbufscript = dss->netbufscript;
 
     rc = 0;
@@ -93,9 +93,9 @@ out:
     return rc;
 }
 
-static void nic_destroy(libxl__remus_device_state *rds)
+static void nic_destroy(libxl__checkpoint_device_state *cds)
 {
-    STATE_AO_GC(rds->ao);
+    STATE_AO_GC(cds->ao);
     libxl__remus_netbuf_state *ns = CTX->rns;
 
     if (!ns)
@@ -126,14 +126,14 @@ static void nic_destroy(libxl__remus_device_state *rds)
  * it must ONLY be used for remus because if driver domains
  * were in use it would constitute a security vulnerability.
  */
-static const char *get_vifname(libxl__remus_device *dev,
+static const char *get_vifname(libxl__checkpoint_device *dev,
                                const libxl_device_nic *nic)
 {
     const char *vifname = NULL;
     const char *path;
     int rc;
 
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     /* Convenience aliases */
     libxl__remus_netbuf_state *netbuf_state = CTX->rns;
@@ -151,7 +151,7 @@ static const char *get_vifname(libxl__remus_device *dev,
     return vifname;
 }
 
-static void free_qdisc(libxl__remus_device_nic *remus_nic)
+static void free_qdisc(libxl__checkpoint_device_nic *remus_nic)
 {
     if (remus_nic->qdisc == NULL)
         return;
@@ -161,7 +161,7 @@ static void free_qdisc(libxl__remus_device_nic *remus_nic)
 }
 
 static int init_qdisc(libxl__remus_netbuf_state *netbuf_state,
-                      libxl__remus_device_nic *remus_nic)
+                      libxl__checkpoint_device_nic *remus_nic)
 {
     int rc, ret, ifindex;
     struct rtnl_link *ifb = NULL;
@@ -251,13 +251,13 @@ static void netbuf_teardown_script_cb(libxl__egc *egc,
  * $REMUS_IFB (for teardown)
  * setup/teardown as command line arg.
  */
-static void setup_async_exec(libxl__remus_device *dev, char *op)
+static void setup_async_exec(libxl__checkpoint_device *dev, char *op)
 {
     int arraysize, nr = 0;
     char **env = NULL, **args = NULL;
     libxl__async_exec_state *aes = &dev->aes;
-    libxl__remus_device_nic *remus_nic = dev->data;
-    STATE_AO_GC(dev->rds->ao);
+    libxl__checkpoint_device_nic *remus_nic = dev->data;
+    STATE_AO_GC(dev->cds->ao);
 
     /* Convenience aliases */
     libxl__remus_netbuf_state *ns = CTX->rns;
@@ -288,7 +288,7 @@ static void setup_async_exec(libxl__remus_device *dev, char *op)
     args[nr++] = NULL;
     assert(nr == arraysize);
 
-    aes->ao = dev->rds->ao;
+    aes->ao = dev->cds->ao;
     aes->what = GCSPRINTF("%s %s", args[0], args[1]);
     aes->env = env;
     aes->args = args;
@@ -305,13 +305,13 @@ static void setup_async_exec(libxl__remus_device *dev, char *op)
 
 /* setup() and teardown() */
 
-static void nic_setup(libxl__remus_device *dev)
+static void nic_setup(libxl__checkpoint_device *dev)
 {
     int rc;
-    libxl__remus_device_nic *remus_nic;
+    libxl__checkpoint_device_nic *remus_nic;
     const libxl_device_nic *nic = dev->backend_dev;
 
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     GCNEW(remus_nic);
     dev->data = remus_nic;
@@ -330,7 +330,7 @@ static void nic_setup(libxl__remus_device *dev)
     return;
 
 out:
-    dev->callback(dev->rds->egc, dev, rc);
+    dev->callback(dev->cds->egc, dev, rc);
 }
 
 /*
@@ -341,12 +341,12 @@ static void netbuf_setup_script_cb(libxl__egc *egc,
                                    libxl__async_exec_state *aes,
                                    int status)
 {
-    libxl__remus_device *dev = CONTAINER_OF(aes, *dev, aes);
-    libxl__remus_device_nic *remus_nic = dev->data;
+    libxl__checkpoint_device *dev = CONTAINER_OF(aes, *dev, aes);
+    libxl__checkpoint_device_nic *remus_nic = dev->data;
     const char *out_path_base, *hotplug_error = NULL;
     int rc;
 
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     /* Convenience aliases */
     libxl__remus_netbuf_state *netbuf_state = CTX->rns;
@@ -401,10 +401,10 @@ out:
     dev->callback(egc, dev, rc);
 }
 
-static void nic_teardown(libxl__remus_device *dev)
+static void nic_teardown(libxl__checkpoint_device *dev)
 {
     int rc;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     setup_async_exec(dev, "teardown");
 
@@ -415,7 +415,7 @@ static void nic_teardown(libxl__remus_device *dev)
     return;
 
 out:
-    dev->callback(dev->rds->egc, dev, rc);
+    dev->callback(dev->cds->egc, dev, rc);
 }
 
 static void netbuf_teardown_script_cb(libxl__egc *egc,
@@ -423,8 +423,8 @@ static void netbuf_teardown_script_cb(libxl__egc *egc,
                                       int status)
 {
     int rc;
-    libxl__remus_device *dev = CONTAINER_OF(aes, *dev, aes);
-    libxl__remus_device_nic *remus_nic = dev->data;
+    libxl__checkpoint_device *dev = CONTAINER_OF(aes, *dev, aes);
+    libxl__checkpoint_device_nic *remus_nic = dev->data;
 
     if (status)
         rc = ERROR_FAIL;
@@ -446,7 +446,7 @@ enum {
 
 /* API implementations */
 
-static int remus_netbuf_op(libxl__remus_device_nic *remus_nic,
+static int remus_netbuf_op(libxl__checkpoint_device_nic *remus_nic,
                            libxl__remus_netbuf_state *netbuf_state,
                            int buffer_op)
 {
@@ -483,30 +483,30 @@ out:
     return rc;
 }
 
-static void nic_postsuspend(libxl__remus_device *dev)
+static void nic_postsuspend(libxl__checkpoint_device *dev)
 {
     int rc;
-    libxl__remus_device_nic *remus_nic = dev->data;
-    STATE_AO_GC(dev->rds->ao);
+    libxl__checkpoint_device_nic *remus_nic = dev->data;
+    STATE_AO_GC(dev->cds->ao);
     libxl__remus_netbuf_state *ns = CTX->rns;
 
     rc = remus_netbuf_op(remus_nic, ns, tc_buffer_start);
-    dev->callback(dev->rds->egc, dev, rc);
+    dev->callback(dev->cds->egc, dev, rc);
 }
 
-static void nic_commit(libxl__remus_device *dev)
+static void nic_commit(libxl__checkpoint_device *dev)
 {
     int rc;
-    libxl__remus_device_nic *remus_nic = dev->data;
-    STATE_AO_GC(dev->rds->ao);
+    libxl__checkpoint_device_nic *remus_nic = dev->data;
+    STATE_AO_GC(dev->cds->ao);
     libxl__remus_netbuf_state *ns = CTX->rns;
 
     rc = remus_netbuf_op(remus_nic, ns, tc_buffer_release);
-    dev->callback(dev->rds->egc, dev, rc);
+    dev->callback(dev->cds->egc, dev, rc);
 }
 
-const libxl__remus_device_subkind_ops remus_device_nic = {
-    .kind = LIBXL__REMUS_DEVICE_NIC,
+const libxl__checkpoint_device_subkind_ops remus_device_nic = {
+    .kind = LIBXL__CHECKPOINT_DEVICE_NIC,
     .init = nic_init,
     .destroy = nic_destroy,
     .setup = nic_setup,
