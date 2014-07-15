@@ -832,10 +832,10 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
         }
 
         if (info->netbufscript) {
-            rds->netbufscript =
+            dss->netbufscript =
                 libxl__strdup(gc, info->netbufscript);
         } else {
-            rds->netbufscript =
+            dss->netbufscript =
                 GCSPRINTF("%s/remus-netbuf-setup",
                 libxl__xen_script_dir_path());
         }
@@ -844,9 +844,12 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
     rds->ao = ao;
     rds->egc = egc;
     rds->domid = domid;
-    rds->diskbuf = info->diskbuf;
     rds->callback = libxl__remus_setup_done;
     rds->ops = remus_ops;
+    if (info->diskbuf)
+        rds->enabled_device_kinds |= LIBXL__REMUS_DEVICE_DISK;
+    if (info->netbuf)
+        rds->enabled_device_kinds |= LIBXL__REMUS_DEVICE_NIC;
 
     /* Point of no return */
     libxl__remus_devices_setup(egc, rds);

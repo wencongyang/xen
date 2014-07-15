@@ -28,6 +28,7 @@
 struct libxl__remus_netbuf_state {
     libxl__ao *ao;
     uint32_t domid;
+    const char *netbufscript;
 
     struct nl_sock *nlsock;
     struct nl_cache *qdisc_cache;
@@ -51,6 +52,7 @@ static int nic_init(libxl__remus_device_state *rds)
 {
     int rc, ret;
     libxl__remus_netbuf_state *ns;
+    libxl__domain_suspend_state *dss = CONTAINER_OF(rds, *dss, rds);
 
     STATE_AO_GC(rds->ao);
 
@@ -83,6 +85,7 @@ static int nic_init(libxl__remus_device_state *rds)
 
     ns->ao = rds->ao;
     ns->domid = rds->domid;
+    ns->netbufscript = dss->netbufscript;
 
     rc = 0;
 
@@ -258,7 +261,7 @@ static void setup_async_exec(libxl__remus_device *dev, char *op)
 
     /* Convenience aliases */
     libxl__remus_netbuf_state *ns = CTX->rns;
-    char *const script = libxl__strdup(gc, dev->rds->netbufscript);
+    char *const script = libxl__strdup(gc, ns->netbufscript);
     const uint32_t domid = ns->domid;
     const int dev_id = remus_nic->devid;
     const char *const vif = remus_nic->vif;
@@ -381,7 +384,7 @@ static void netbuf_setup_script_cb(libxl__egc *egc,
 
     if (hotplug_error) {
         LOG(ERROR, "netbuf script %s setup failed for vif %s: %s",
-            dev->rds->netbufscript, vif, hotplug_error);
+            CTX->rns->netbufscript, vif, hotplug_error);
         rc = ERROR_FAIL;
         goto out;
     }

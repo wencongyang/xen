@@ -2505,8 +2505,8 @@ typedef struct libxl__save_helper_state {
  */
 
 typedef enum libxl__remus_device_kind {
-    LIBXL__REMUS_DEVICE_NIC,
-    LIBXL__REMUS_DEVICE_DISK,
+    LIBXL__REMUS_DEVICE_NIC = (1 << 0),
+    LIBXL__REMUS_DEVICE_DISK= (1 << 1),
 } libxl__remus_device_kind;
 
 typedef struct libxl__remus_device libxl__remus_device;
@@ -2581,8 +2581,7 @@ struct libxl__remus_device_state {
     libxl__remus_callback *callback;
     /* the last ops must be NULL */
     const libxl__remus_device_subkind_ops **ops;
-    const char *netbufscript;
-    bool diskbuf;
+    int enabled_device_kinds;
 
     /* private */
     /* devices that have been set up */
@@ -2692,9 +2691,15 @@ struct libxl__domain_suspend_state {
     libxl__ev_xswatch guest_watch;
     libxl__ev_time guest_timeout;
     const char *dm_savefile;
-    libxl__remus_device_state rds;
-    libxl__ev_time checkpoint_timeout; /* used for Remus checkpoint */
-    int interval; /* checkpoint interval (for Remus) */
+    /* for Remus */
+    struct {
+        libxl__remus_device_state rds;
+        const char *netbufscript;
+        /* used for Remus checkpoint */
+        libxl__ev_time checkpoint_timeout;
+        /* checkpoint interval */
+        int interval;
+    };
     libxl__save_helper_state shs;
     libxl__logdirty_switch logdirty;
     void (*callback_common_done)(libxl__egc*,
