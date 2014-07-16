@@ -377,6 +377,31 @@ static int suspend_and_state(int (*suspend)(void*), void* data,
     return 0;
 }
 
+static int update_dirty_bitmap(uint8_t *(*get_dirty_pfn)(void *), void *data,
+                               unsigned long p2m_size, unsigned long *to_send)
+{
+    uint64_t *pfn_list;
+    uint64_t count, i;
+    uint64_t pfn;
+
+    pfn_list = (uint64_t *)get_dirty_pfn(data);
+    assert(pfn_list);
+
+    count = pfn_list[0];
+    for (i = 0; i < count; i++) {
+        pfn = pfn_list[i + 1];
+        if (pfn > p2m_size) {
+            errno = EINVAL;
+            return -1;
+        }
+
+        set_bit(pfn, to_send);
+    }
+
+    free(pfn_list);
+    return 0;
+}
+
 /*
 ** Map the top-level page of MFNs from the guest. The guest might not have
 ** finished resuming from a previous restore operation, so we wait a while for
@@ -1769,11 +1794,14 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
         free(buf);
     }
 
-    if ( !callbacks->checkpoint )
+    if ( !callbacks->checkpoint || callbacks->get_dirty_pfn )
     {
         /*
          * If this is not a checkpointed save then this must be the first and
          * last checkpoint.
+         *
+         * If we are in colo mode, send last checkpoint to resume secondary
+         * vm.
          */
         i = XC_SAVE_ID_LAST_CHECKPOINT;
         if ( wrexact(io_fd, &i, sizeof(int)) )
@@ -2119,7 +2147,14 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
      * primary vm and secondary vm now.
      */
     if ( !rc && callbacks->postcopy && callbacks->get_dirty_pfn )
-        callbacks->postcopy(callbacks->data);
+    {
+        if ( !callbacks->postcopy(callbacks->data) )
+        {
+            ERROR("postcopy fails");
+            /* postcopy may be implemented in libxl, no way to get errno */
+            rc = -1;
+        }
+    }
 
     /* Enable compression now, finally */
     compressing = (flags & XCFLAGS_CHECKPOINT_COMPRESS);
@@ -2136,8 +2171,11 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
                                io_fd, dom, &info) )
         {
             ERROR("Domain appears not to have suspended");
+            /* postcopy may be implemented in libxl, no way to get errno */
+            errno = -1;
             goto out;
         }
+
         DPRINTF("SUSPEND shinfo %08lx\n", info.shared_info_frame);
         print_stats(xch, dom, 0, &time_stats, &shadow_stats, 1);
 
@@ -2146,6 +2184,16 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
                                dinfo->p2m_size, NULL, 0, &shadow_stats) != dinfo->p2m_size )
         {
             PERROR("Error flushing shadow PT");
+        }
+
+        if ( callbacks->get_dirty_pfn )
+        {
+            if ( update_dirty_bitmap(callbacks->get_dirty_pfn, callbacks->data,
+                                     dinfo->p2m_size, to_send) )
+            {
+                ERROR("getting secondary vm's dirty pages failed");
+                goto out;
+            }
         }
 
         goto copypages;

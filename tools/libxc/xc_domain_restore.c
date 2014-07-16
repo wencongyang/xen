@@ -1454,7 +1454,7 @@ int xc_domain_restore(xc_interface *xch, int io_fd, uint32_t dom,
     int nraces = 0;
 
     /* The new domain's shared-info frame number. */
-    unsigned long shared_info_frame;
+    unsigned long shared_info_frame = 0;
     unsigned char shared_info_page[PAGE_SIZE]; /* saved contents from file */
     shared_info_any_t *old_shared_info = 
         (shared_info_any_t *)shared_info_page;
@@ -1503,6 +1503,8 @@ int xc_domain_restore(xc_interface *xch, int io_fd, uint32_t dom,
     struct domain_info_context *dinfo = &ctx->dinfo;
 
     DPRINTF("%s: starting restore of new domid %u", __func__, dom);
+
+    n = m = 0;
 
     pagebuf_init(&pagebuf);
     memset(&tailbuf, 0, sizeof(tailbuf));
@@ -1629,7 +1631,6 @@ int xc_domain_restore(xc_interface *xch, int io_fd, uint32_t dom,
      * We uncanonicalise page tables as we go.
      */
 
-    n = m = 0;
  loadpages:
     for ( ; ; )
     {
@@ -1793,6 +1794,7 @@ int xc_domain_restore(xc_interface *xch, int io_fd, uint32_t dom,
         goto finish;
     }
 
+new_checkpoint:
     // DPRINTF("Buffered checkpoint\n");
 
     if ( pagebuf_get(xch, ctx, &pagebuf, io_fd, dom) ) {
@@ -2292,6 +2294,7 @@ int xc_domain_restore(xc_interface *xch, int io_fd, uint32_t dom,
             free(tdata.data);
             goto out;
         }
+        memset(&tdata, 0, sizeof(tdata));
     }
 
     /* Dump the QEMU state to a state file for QEMU to load */
@@ -2357,6 +2360,43 @@ int xc_domain_restore(xc_interface *xch, int io_fd, uint32_t dom,
     rc = 0;
 
  out:
+    if ( !rc && callbacks->checkpoint )
+    {
+#define HANDLE_CALLBACK_RETURN_VALUE(frc)                   \
+    do {                                                    \
+        if ( frc == 0 )                                     \
+        {                                                   \
+            /* Some internal error happens */               \
+            rc = 1;                                         \
+            goto out;                                       \
+        }                                                   \
+        else if ( frc == 2 )                                \
+        {                                                   \
+            /* Reading/writing error, do failover */        \
+            rc = 0;                                         \
+            goto failover;                                  \
+        }                                                   \
+    } while (0)
+        /* COLO */
+
+        /* TODO: call restore_results */
+
+        /* Resume secondary vm */
+        frc = callbacks->postcopy(callbacks->data);
+        HANDLE_CALLBACK_RETURN_VALUE(frc);
+
+        /* wait for new checkpoint */
+        frc = callbacks->checkpoint(callbacks->data);
+        HANDLE_CALLBACK_RETURN_VALUE(frc);
+
+        /* suspend secondary vm */
+        frc = callbacks->suspend(callbacks->data);
+        HANDLE_CALLBACK_RETURN_VALUE(frc);
+
+        goto new_checkpoint;
+    }
+
+failover:
     if ( (rc != 0) && (dom != 0) )
         xc_domain_destroy(xch, dom);
     xc_hypercall_buffer_free(xch, ctxt);
