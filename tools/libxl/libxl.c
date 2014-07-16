@@ -17,6 +17,7 @@
 #include "libxl_osdeps.h"
 
 #include "libxl_internal.h"
+#include "libxl_colo.h"
 
 #define PAGE_TO_MEMKB(pages) ((pages) * 4)
 #define BACKEND_STRING_SIZE 5
@@ -823,8 +824,25 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
 
     assert(info);
 
+    if (type != LIBXL_DOMAIN_TYPE_HVM && info->colo) {
+        /* colo only supports hvm now */
+        rc = ERROR_FAIL;
+        goto out;
+    }
+
     /* Convenience aliases */
     libxl__checkpoint_device_state *const cds = &dss->cds;
+    libxl__colo_save_state *const css = &dss->css;
+
+    if (info->colo) {
+        css->cds.ao = ao;
+        css->cds.domid = domid;
+        css->cds.saved_rc = 0;
+
+        /* Point of no return */
+        libxl__colo_save_setup(egc, css);
+        return AO_INPROGRESS;
+    }
 
     if (info->netbuf) {
         if (!libxl__netbuffer_enabled(gc)) {

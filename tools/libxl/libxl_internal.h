@@ -2690,6 +2690,25 @@ extern const libxl__checkpoint_device_subkind_ops remus_device_drbd_disk;
 
 _hidden int libxl__netbuffer_enabled(libxl__gc *gc);
 
+/*----- colo related state structure -----*/
+typedef struct libxl__colo_save_state libxl__colo_save_state;
+struct libxl__colo_save_state {
+    libxl__checkpoint_device_state cds;
+    int send_fd;
+    int recv_fd;
+
+    /* private */
+    libxl__datacopier_state dc;
+    libxl__datareader_state drs;
+    uint8_t section;
+    uint64_t count;
+    uint64_t *buff;
+    /* read section and count, and then store it in temp_buff */
+    uint8_t temp_buff[9];
+    void (*callback)(libxl__egc *, libxl__colo_save_state *);
+    bool svm_running;
+};
+
 /*----- Domain suspend (save) state structure -----*/
 
 typedef struct libxl__domain_suspend_state libxl__domain_suspend_state;
@@ -2753,14 +2772,18 @@ struct libxl__domain_suspend_state {
     libxl__domain_suspend_state2 dss2;
     int hvm;
     int xcflags;
-    /* for Remus */
-    struct {
-        libxl__checkpoint_device_state cds;
-        const char *netbufscript;
-        /* used for Remus checkpoint */
-        libxl__ev_time checkpoint_timeout;
-        /* checkpoint interval */
-        int interval;
+    union {
+        /* for Remus */
+        struct {
+            libxl__checkpoint_device_state cds;
+            const char *netbufscript;
+            /* used for Remus checkpoint */
+            libxl__ev_time checkpoint_timeout;
+            /* checkpoint interval */
+            int interval;
+        };
+        /* for COLO */
+        libxl__colo_save_state css;
     };
     libxl__save_helper_state shs;
     libxl__logdirty_switch logdirty;
