@@ -43,6 +43,8 @@ void libxl__colo_save_setup(libxl__egc *egc, libxl__colo_save_state *css)
     css->cds.callback = colo_save_setup_done;
     css->svm_running = false;
 
+    libxl__ev_time_init(&css->timeout);
+
     libxl__checkpoint_devices_setup(egc, &css->cds);
 }
 
@@ -450,6 +452,8 @@ out:
 static void colo_device_commit_cb(libxl__egc *egc,
                                   libxl__checkpoint_device_state *cds,
                                   int rc);
+static void colo_next_checkpoint(libxl__egc *egc, libxl__ev_time *ev,
+                                  const struct timeval *requested_abs);
 static void colo_start_new_checkpoint(libxl__egc *egc,
                                       libxl__checkpoint_device_state *cds,
                                       int rc);
@@ -485,11 +489,24 @@ static void colo_device_commit_cb(libxl__egc *egc,
     }
 
     /* TODO: wait a new checkpoint */
-    colo_start_new_checkpoint(egc, cds, 0);
+    rc = libxl__ev_time_register_rel(gc, &css->timeout,
+                                     colo_next_checkpoint,
+                                     20);
+    if (rc)
+        goto out;
+
     return;
 
 out:
     libxl__xc_domain_saverestore_async_callback_done(egc, &dss->shs, 0);
+}
+
+static void colo_next_checkpoint(libxl__egc *egc, libxl__ev_time *ev,
+                                  const struct timeval *requested_abs)
+{
+    libxl__colo_save_state *css = CONTAINER_OF(ev, *css, timeout);
+
+    colo_start_new_checkpoint(egc, &css->cds, 0);
 }
 
 static void colo_start_new_checkpoint(libxl__egc *egc,
