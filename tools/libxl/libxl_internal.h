@@ -2736,6 +2736,9 @@ struct libxl__colo_save_state {
     uint8_t temp_buff[9];
     void (*callback)(libxl__egc *, libxl__colo_save_state *);
     bool svm_running;
+
+    /* hack */
+    libxl__ev_time timeout;
 };
 
 /*----- Domain suspend (save) state structure -----*/
