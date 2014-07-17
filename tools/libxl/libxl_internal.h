@@ -2712,6 +2712,7 @@ struct libxl__logdirty_switch {
     libxl__ev_xswatch watch;
     libxl__ev_time timeout;
 };
+_hidden void logdirty_init(libxl__logdirty_switch *lds);
 
 /*
  * libxl__domain_suspend_state is for saving guest, not
@@ -3011,6 +3012,26 @@ typedef void libxl__domain_create_cb(libxl__egc *egc,
                                      libxl__domain_create_state*,
                                      int rc, uint32_t domid);
 
+/* colo related structure */
+typedef struct libxl__colo_restore_state libxl__colo_restore_state;
+typedef void libxl__colo_callback(libxl__egc *,
+                                  libxl__colo_restore_state *, int rc);
+struct libxl__colo_restore_state {
+    /* must set by caller of libxl__colo_(setup|teardown) */
+    libxl__ao *ao;
+    uint32_t domid;
+    int send_fd;
+    int recv_fd;
+    int hvm;
+    int pae;
+    int superpages;
+    libxl__colo_callback *callback;
+
+    /* private, colo restore checkpoint state */
+    libxl__domain_create_cb *saved_cb;
+    void *crcs;
+};
+
 struct libxl__domain_create_state {
     /* filled in by user */
     libxl__ao *ao;
@@ -3023,6 +3044,7 @@ struct libxl__domain_create_state {
     int guest_domid;
     int checkpointed_stream;
     libxl__domain_build_state build_state;
+    libxl__colo_restore_state crs;
     libxl__bootloader_state bl;
     libxl__stub_dm_spawn_state dmss;
         /* If we're not doing stubdom, we use only dmss.dm,
