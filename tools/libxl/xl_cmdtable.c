@@ -495,7 +495,8 @@ struct cmd_spec cmd_table[] = {
       "                        to sh. If empty, run <host> instead of \n"
       "                        ssh <host> xl migrate-receive -r [-e]\n"
       "-e                      Do not wait in the background (on <host>) for the death\n"
-      "                        of the domain."
+      "                        of the domain.\n"
+      "-c                      Enable COLO HA. It is conflict with -i and -b"
     },
 #endif
     { "devd",

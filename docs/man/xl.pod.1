@@ -427,11 +427,14 @@ Print huge (!) amount of debug during the migration process.
 
 =item B<remus> [I<OPTIONS>] I<domain-id> I<host>
 
-Enable Remus HA for domain. By default B<xl> relies on ssh as a transport
+Enable Remus HA or COLO HA for domain. By default B<xl> relies on ssh as a transport
 mechanism between the two hosts.
 
 N.B: Remus support in xl is still in experimental (proof-of-concept) phase.
      Disk buffering support is limited to drbd disks.
+
+     COLO support in xl is still in experimental (proof-of-concept) phase.
+     There is no support for network or disk at the moment.
 
 B<OPTIONS>
 
@@ -472,6 +475,10 @@ If empty, run <host> instead of ssh <host> xl migrate-receive -r [-e].
 
 On the new host, do not wait in the background (on <host>) for the death
 of the domain. See the corresponding option of the I<create> subcommand.
+
+=item B<-c>
+
+Enable COLO HA. It is conflict with B<-i> and B<-b>.
 
 =back
 
