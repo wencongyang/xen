@@ -32,6 +32,10 @@ char *libxl__blktap_devpath(libxl__gc *gc,
     tap_list_t tap;
     int err;
 
+    if (format == LIBXL_DISK_FORMAT_REMUS)
+        if (libxl__blktap_get_real_format(gc, disk, format) < 0)
+            return NULL;
+
     type = libxl__device_disk_string_of_format(format);
     err = tap_ctl_find(type, disk, &tap);
     if (err == 0) {
@@ -82,6 +86,35 @@ int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params)
     }
 
     return 0;
+}
+
+libxl_disk_format libxl__blktap_get_real_format(libxl__gc *gc,
+                                                const char *disk,
+                                                libxl_disk_format format)
+{
+    const char *type;
+
+    if (format != LIBXL_DISK_FORMAT_REMUS)
+        return format;
+
+    /* The format of disk: ip:port|xxx:file */
+    type = strchr(disk, '|');
+    if (!type) {
+        LOG(ERROR, "Unable to parse params %s", disk);
+        return ERROR_FAIL;
+    }
+
+    type++;
+
+    /* libxl only supports aio/vhd(see disk_try_backend()) */
+    if (!strncmp(type, "aio:", 4))
+        return LIBXL_DISK_FORMAT_RAW;
+    else if (!strncmp(type, "vhd:", 4))
+        return LIBXL_DISK_FORMAT_VHD;
+
+    LOG(ERROR, "Unsupported format: %s", type);
+
+    return ERROR_FAIL;
 }
 
 /*

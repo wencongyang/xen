@@ -719,11 +719,19 @@ static char ** libxl__build_device_model_args_new(libxl__gc *gc,
             const char *format = qemu_disk_format_string(disks[i].format);
             char *drive;
             const char *pdev_path;
+            libxl_disk_format real_format;
 
             if (dev_number == -1) {
                 LIBXL__LOG(ctx, LIBXL__LOG_WARNING, "unable to determine"
                            " disk number for %s", disks[i].vdev);
                 continue;
+            }
+
+            if (disks[i].format == LIBXL_DISK_FORMAT_REMUS) {
+                real_format = libxl__blktap_get_real_format(gc,
+                                                            disks[i].pdev_path,
+                                                            disks[i].format);
+                format = qemu_disk_format_string(real_format);
             }
 
             if (disks[i].is_cdrom) {
