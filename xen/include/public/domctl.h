@@ -1008,6 +1008,7 @@ struct xen_domctl {
 #define XEN_DOMCTL_cacheflush                    71
 #define XEN_DOMCTL_get_vcpu_msrs                 72
 #define XEN_DOMCTL_set_vcpu_msrs                 73
+#define XEN_DOMCTL_hvm_sync_mmu                  74
 #define XEN_DOMCTL_gdbsx_guestmemio            1000
 #define XEN_DOMCTL_gdbsx_pausevcpu             1001
 #define XEN_DOMCTL_gdbsx_unpausevcpu           1002

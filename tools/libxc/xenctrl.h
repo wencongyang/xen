@@ -961,6 +961,8 @@ int xc_domain_set_virq_handler(xc_interface *xch, uint32_t domid, int virq);
 int xc_domain_set_max_evtchn(xc_interface *xch, uint32_t domid,
                              uint32_t max_port);
 
+int xc_domain_hvm_sync_mmu(xc_interface *xch, uint32_t domid);
+
 /*
  * CPUPOOL MANAGEMENT FUNCTIONS
  */

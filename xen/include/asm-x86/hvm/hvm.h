@@ -151,6 +151,7 @@ struct hvm_function_table {
 
     int  (*cpu_up)(void);
     void (*cpu_down)(void);
+    void (*sync_mmu)(struct domain *d);
 
     /* Copy up to 15 bytes from cached instruction bytes at current rIP. */
     unsigned int (*get_insn_bytes)(struct vcpu *v, uint8_t *buf);

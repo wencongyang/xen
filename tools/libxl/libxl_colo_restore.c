@@ -124,11 +124,15 @@ static void colo_resume_vm(libxl__egc *egc,
     STATE_AO_GC(crs->ao);
 
     if (!crs->saved_cb) {
-        /* TODO: sync mmu for hvm? */
+        rc = xc_domain_hvm_sync_mmu(CTX->xch, crs->domid);
+        if (rc)
+            goto fail;
+
         rc = libxl__domain_resume(gc, crs->domid, 0, 1);
         if (rc)
             LOG(ERROR, "cannot resume secondary vm");
 
+fail:
         crcs->callback(egc, crcs, rc);
         return;
     }

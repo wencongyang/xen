@@ -29,6 +29,7 @@ extern int  vmx_cpu_up_prepare(unsigned int cpu);
 extern void vmx_cpu_dead(unsigned int cpu);
 extern int  vmx_cpu_up(void);
 extern void vmx_cpu_down(void);
+extern void vmx_sync_mmu(struct domain *d);
 extern void vmx_save_host_msrs(void);
 
 struct vmcs_struct {

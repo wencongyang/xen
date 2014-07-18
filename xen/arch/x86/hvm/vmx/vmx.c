@@ -1719,6 +1719,7 @@ static struct hvm_function_table __initdata vmx_function_table = {
     .event_pending        = vmx_event_pending,
     .cpu_up               = vmx_cpu_up,
     .cpu_down             = vmx_cpu_down,
+    .sync_mmu             = vmx_sync_mmu,
     .cpuid_intercept      = vmx_cpuid_intercept,
     .wbinvd_intercept     = vmx_wbinvd_intercept,
     .fpu_dirty_intercept  = vmx_fpu_dirty_intercept,

@@ -79,6 +79,12 @@ int arch_hvm_load(struct domain *d, struct hvm_save_header *hdr)
     return 0;
 }
 
+void arch_hvm_sync_mmu(struct domain *d)
+{
+    if (hvm_funcs.sync_mmu)
+        hvm_funcs.sync_mmu(d);
+}
+
 /*
  * Local variables:
  * mode: C
