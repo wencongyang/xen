@@ -108,7 +108,8 @@ static int get_image_info(int fd, td_disk_info_t *info)
 }
 
 /* Open the disk file and initialize ram state. */
-int tdram_open (td_driver_t *driver, const char *name, td_flag_t flags)
+int tdram_open (td_driver_t *driver, const char *name, td_flag_t flags,
+		td_uuid_t uuid)
 {
 	char *p;
 	uint64_t size;
