@@ -211,7 +211,8 @@ static int disk_try_backend(disk_try_backend_args *a,
             return 0;
         }
         if (!(a->disk->format == LIBXL_DISK_FORMAT_RAW ||
-              a->disk->format == LIBXL_DISK_FORMAT_VHD)) {
+              a->disk->format == LIBXL_DISK_FORMAT_VHD ||
+              a->disk->format == LIBXL_DISK_FORMAT_REMUS)) {
             goto bad_format;
         }
         return backend;
@@ -295,6 +296,7 @@ char *libxl__device_disk_string_of_format(libxl_disk_format format)
         case LIBXL_DISK_FORMAT_VHD: return "vhd";
         case LIBXL_DISK_FORMAT_RAW:
         case LIBXL_DISK_FORMAT_EMPTY: return "aio";
+        case LIBXL_DISK_FORMAT_REMUS: return "remus";
         default: return NULL;
     }
 }
