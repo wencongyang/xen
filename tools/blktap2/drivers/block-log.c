@@ -585,7 +585,8 @@ static void ctl_request(event_id_t id, char mode, void *private)
 
 static int tdlog_close(td_driver_t*);
 
-static int tdlog_open(td_driver_t* driver, const char* name, td_flag_t flags)
+static int tdlog_open(td_driver_t* driver, const char* name, td_flag_t flags,
+		      td_uuid_t uuid)
 {
   struct tdlog_state* s = (struct tdlog_state*)driver->data;
   int rc;

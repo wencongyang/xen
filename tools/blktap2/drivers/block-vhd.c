@@ -675,7 +675,8 @@ __vhd_open(td_driver_t *driver, const char *name, vhd_flag_t flags)
 }
 
 static int
-_vhd_open(td_driver_t *driver, const char *name, td_flag_t flags)
+_vhd_open(td_driver_t *driver, const char *name, td_flag_t flags,
+	  td_uuid_t uuid)
 {
 	vhd_flag_t vhd_flags = 0;
 
