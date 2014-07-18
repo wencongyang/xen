@@ -865,7 +865,8 @@ out:
 }
 
 /* Open the disk file and initialize qcow state. */
-int tdqcow_open (td_driver_t *driver, const char *name, td_flag_t flags)
+int tdqcow_open (td_driver_t *driver, const char *name, td_flag_t flags,
+		 td_uuid_t uuid)
 {
 	int fd, len, i, ret, size, o_flags;
 	td_disk_info_t *bs = &(driver->info);

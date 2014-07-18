@@ -517,7 +517,8 @@ block_cache_put_request(block_cache_t *cache, block_cache_request_t *breq)
 }
 
 static int
-block_cache_open(td_driver_t *driver, const char *name, td_flag_t flags)
+block_cache_open(td_driver_t *driver, const char *name, td_flag_t flags,
+		 td_uuid_t uuid)
 {
 	int i, err;
 	radix_tree_t *tree;
