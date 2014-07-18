@@ -1535,6 +1535,10 @@ _hidden char *libxl__blktap_devpath(libxl__gc *gc,
  */
 _hidden int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params);
 
+_hidden libxl_disk_format libxl__blktap_get_real_format(libxl__gc *gc,
+                                                        const char *disk,
+                                                        libxl_disk_format format);
+
 _hidden int libxl__device_from_disk(libxl__gc *gc, uint32_t domid,
                                    libxl_device_disk *disk,
                                    libxl__device *device);

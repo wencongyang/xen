@@ -33,6 +33,12 @@ int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params)
     return 0;
 }
 
+libxl_disk_format libxl__blktap_get_real_format(const char *disk,
+                                                libxl_disk_format format)
+{
+    return format;
+}
+
 /*
  * Local variables:
  * mode: C
