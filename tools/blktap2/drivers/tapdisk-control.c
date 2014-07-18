@@ -270,15 +270,10 @@ tapdisk_control_list(struct tapdisk_control_connection *connection,
 		response.u.list.state   = vbd->state;
 		response.u.list.path[0] = 0;
 
-		if (!list_empty(&vbd->images)) {
-			td_image_t *image = list_entry(vbd->images.next,
-						       td_image_t, next);
+		if (vbd->name)
 			snprintf(response.u.list.path,
 				 sizeof(response.u.list.path),
-				 "%s:%s",
-				 tapdisk_disk_types[image->type]->name,
-				 image->name);
-		}
+				 "%s", vbd->name);
 
 		tapdisk_control_write_message(connection->socket, &response, 2);
 	}
