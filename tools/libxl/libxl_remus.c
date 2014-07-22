@@ -18,6 +18,13 @@
 #include "libxl_internal.h"
 #include "libxl_remus.h"
 
+extern const libxl__checkpoint_device_subkind_ops remus_device_nic;
+extern const libxl__checkpoint_device_subkind_ops remus_device_drbd_disk;
+static const libxl__checkpoint_device_subkind_ops *remus_ops[] = {
+    &remus_device_nic,
+    &remus_device_drbd_disk,
+    NULL,
+};
 
 /*----- remus: setup the environment -----*/
 static void libxl__remus_setup_done(libxl__egc *egc,
@@ -27,11 +34,12 @@ static void libxl__remus_setup_failed(libxl__egc *egc,
                                       libxl__checkpoint_devices_state *cds,
                                       int rc);
 
-void libxl__remus_setup(libxl__egc *egc,
-                        libxl__domain_suspend_state *dss)
+void libxl__remus_setup(libxl__egc *egc, libxl__remus_state *rs)
 {
+    libxl__domain_suspend_state *dss = CONTAINER_OF(rs, *dss, rs);
+
     /* Convenience aliases */
-    libxl__checkpoint_devices_state *const cds = &dss->cds;
+    libxl__checkpoint_devices_state *const cds = &rs->cds;
     const libxl_domain_remus_info *const info = dss->remus;
 
     STATE_AO_GC(dss->ao);
@@ -51,19 +59,21 @@ void libxl__remus_setup(libxl__egc *egc,
     cds->egc = egc;
     cds->domid = dss->domid;
     cds->callback = libxl__remus_setup_done;
+    cds->ops = remus_ops;
+    rs->interval = info->interval;
 
     libxl__checkpoint_devices_setup(egc, cds);
     return;
 
 out:
-    libxl__remus_setup_failed(egc, cds, ERROR_FAIL);
+    dss->callback(egc, dss, ERROR_FAIL);
 }
 
 static void libxl__remus_setup_done(libxl__egc *egc,
                                     libxl__checkpoint_devices_state *cds,
                                     int rc)
 {
-    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, rs.cds);
     STATE_AO_GC(dss->ao);
 
     if (!rc) {
@@ -81,7 +91,7 @@ static void libxl__remus_setup_failed(libxl__egc *egc,
                                       libxl__checkpoint_devices_state *cds,
                                       int rc)
 {
-    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, rs.cds);
     STATE_AO_GC(dss->ao);
 
     if (rc)
@@ -98,9 +108,11 @@ static void remus_teardown_done(libxl__egc *egc,
                                 int rc);
 
 void libxl__remus_teardown(libxl__egc *egc,
-                           libxl__domain_suspend_state *dss,
+                           libxl__remus_state *rs,
                            int rc)
 {
+    libxl__domain_suspend_state *dss = CONTAINER_OF(rs, *dss, rs);
+
     EGC_GC;
 
     /*
@@ -111,15 +123,15 @@ void libxl__remus_teardown(libxl__egc *egc,
      */
     LOG(WARN, "Remus: Domain suspend terminated with rc %d,"
         " teardown Remus devices...", rc);
-    dss->cds.callback = remus_teardown_done;
-    libxl__checkpoint_devices_teardown(egc, &dss->cds);
+    dss->rs.cds.callback = remus_teardown_done;
+    libxl__checkpoint_devices_teardown(egc, &dss->rs.cds);
 }
 
 static void remus_teardown_done(libxl__egc *egc,
                                 libxl__checkpoint_devices_state *cds,
                                 int rc)
 {
-    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, rs.cds);
     STATE_AO_GC(dss->ao);
 
     if (rc)
@@ -158,7 +170,7 @@ static void remus_domain_suspend_callback_common_done(libxl__egc *egc,
     if (!ok)
         goto out;
 
-    libxl__checkpoint_devices_state *const cds = &dss->cds;
+    libxl__checkpoint_devices_state *const cds = &dss->rs.cds;
     cds->callback = remus_devices_postsuspend_cb;
     libxl__checkpoint_devices_postsuspend(egc, cds);
     return;
@@ -172,7 +184,7 @@ static void remus_devices_postsuspend_cb(libxl__egc *egc,
                                          int rc)
 {
     int ok = 0;
-    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, rs.cds);
 
     if (rc)
         goto out;
@@ -196,7 +208,7 @@ void libxl__remus_domain_resume_callback(void *data)
     libxl__domain_suspend_state *dss = CONTAINER_OF(shs, *dss, shs);
     STATE_AO_GC(dss->ao);
 
-    libxl__checkpoint_devices_state *const cds = &dss->cds;
+    libxl__checkpoint_devices_state *const cds = &dss->rs.cds;
     cds->callback = remus_devices_preresume_cb;
     libxl__checkpoint_devices_preresume(egc, cds);
 }
@@ -206,7 +218,7 @@ static void remus_devices_preresume_cb(libxl__egc *egc,
                                        int rc)
 {
     int ok = 0;
-    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, rs.cds);
     STATE_AO_GC(dss->ao);
 
     if (rc)
@@ -250,7 +262,7 @@ static void remus_checkpoint_dm_saved(libxl__egc *egc,
                                       libxl__domain_suspend_state *dss, int rc)
 {
     /* Convenience aliases */
-    libxl__checkpoint_devices_state *const cds = &dss->cds;
+    libxl__checkpoint_devices_state *const cds = &dss->rs.cds;
 
     STATE_AO_GC(dss->ao);
 
@@ -272,7 +284,7 @@ static void remus_devices_commit_cb(libxl__egc *egc,
                                     libxl__checkpoint_devices_state *cds,
                                     int rc)
 {
-    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, cds);
+    libxl__domain_suspend_state *dss = CONTAINER_OF(cds, *dss, rs.cds);
 
     STATE_AO_GC(dss->ao);
 
@@ -290,9 +302,9 @@ static void remus_devices_commit_cb(libxl__egc *egc,
      */
 
     /* Set checkpoint interval timeout */
-    rc = libxl__ev_time_register_rel(gc, &dss->checkpoint_timeout,
+    rc = libxl__ev_time_register_rel(gc, &dss->rs.checkpoint_timeout,
                                      remus_next_checkpoint,
-                                     dss->interval);
+                                     dss->rs.interval);
 
     if (rc) {
         LOG(ERROR, "unable to register timeout for next epoch."
@@ -310,7 +322,7 @@ static void remus_next_checkpoint(libxl__egc *egc, libxl__ev_time *ev,
                                   const struct timeval *requested_abs)
 {
     libxl__domain_suspend_state *dss =
-                            CONTAINER_OF(ev, *dss, checkpoint_timeout);
+                            CONTAINER_OF(ev, *dss, rs.checkpoint_timeout);
 
     STATE_AO_GC(dss->ao);
 

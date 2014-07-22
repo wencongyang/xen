@@ -17,14 +17,6 @@
 
 #include "libxl_internal.h"
 
-extern const libxl__checkpoint_device_subkind_ops remus_device_nic;
-extern const libxl__checkpoint_device_subkind_ops remus_device_drbd_disk;
-static const libxl__checkpoint_device_subkind_ops *remus_ops[] = {
-    &remus_device_nic,
-    &remus_device_drbd_disk,
-    NULL,
-};
-
 /*----- helper functions -----*/
 
 static int init_device_subkind(libxl__checkpoint_devices_state *cds)
@@ -32,7 +24,7 @@ static int init_device_subkind(libxl__checkpoint_devices_state *cds)
     int rc;
     const libxl__checkpoint_device_subkind_ops **ops;
 
-    for (ops = remus_ops; *ops; ops++) {
+    for (ops = cds->ops; *ops; ops++) {
         rc = (*ops)->init(cds);
         if (rc)
             goto out;
@@ -48,7 +40,7 @@ static void cleanup_device_subkind(libxl__checkpoint_devices_state *cds)
 {
     const libxl__checkpoint_device_subkind_ops **ops;
 
-    for (ops = remus_ops; *ops; ops++)
+    for (ops = cds->ops; *ops; ops++)
         (*ops)->cleanup(cds);
 }
 
@@ -148,7 +140,7 @@ static void checkpoint_devices_setup(libxl__egc *egc,
 
         /* find avaliable ops */
         do {
-            dev->ops = remus_ops[++dev->ops_index];
+            dev->ops = cds->ops[++dev->ops_index];
             if (!dev->ops) {
                 rc = ERROR_CHECKPOINT_DEVICE_NOT_SUPPORTED;
                 goto out;
