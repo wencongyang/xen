@@ -508,6 +508,12 @@ tapdisk_control_close_image(struct tapdisk_control_connection *connection,
 		goto out;
 	}
 
+	/*
+	 * Some I/O requests are pended in the driver, and
+	 * flush these requests first.
+	 */
+	tapdisk_vbd_pre_close_vdi(vbd);
+
 	if (!list_empty(&vbd->pending_requests)) {
 		err = -EAGAIN;
 		goto out;
