@@ -181,6 +181,7 @@ void tapdisk_vbd_free_stack(td_vbd_t *);
 int tapdisk_vbd_open_stack(td_vbd_t *, uint16_t, td_flag_t);
 int tapdisk_vbd_open_vdi(td_vbd_t *, const char *,
 			 uint16_t, uint16_t, td_flag_t);
+void tapdisk_vbd_pre_close_vdi(td_vbd_t *);
 void tapdisk_vbd_close_vdi(td_vbd_t *);
 
 int tapdisk_vbd_attach(td_vbd_t *, const char *, int);

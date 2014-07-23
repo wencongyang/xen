@@ -105,6 +105,24 @@ td_open(td_image_t *image)
 }
 
 int
+td_pre_close(td_image_t *image)
+{
+	td_driver_t *driver;
+
+	driver = image->driver;
+	if (!driver)
+		return -ENODEV;
+
+	if (!driver->ops->td_pre_close)
+		return 0;
+
+	if (driver->refcnt && td_flag_test(driver->state, TD_DRIVER_OPEN))
+		driver->ops->td_pre_close(driver);
+
+	return 0;
+}
+
+int
 td_close(td_image_t *image)
 {
 	td_driver_t *driver;
