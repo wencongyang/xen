@@ -892,6 +892,7 @@ static void primary_queue_write(td_driver_t *driver, td_request_t treq)
 }
 
 
+/* It is called when the user writes "flush" to control file */
 static int client_flush(td_driver_t *driver)
 {
 	struct tdremus_state *s = (struct tdremus_state *)driver->data;
@@ -902,7 +903,8 @@ static int client_flush(td_driver_t *driver)
 		/* connection not yet established, nothing to flush */
 		return 0;
 
-	if (mwrite(s->stream_fd.fd, TDREMUS_COMMIT, strlen(TDREMUS_COMMIT)) < 0) {
+	if (mwrite(s->stream_fd.fd, TDREMUS_COMMIT,
+	    strlen(TDREMUS_COMMIT)) < 0) {
 		RPRINTF("error flushing output");
 		close_stream_fd(s);
 		return -1;
@@ -931,7 +933,6 @@ static int primary_start(td_driver_t *driver)
 
 	tapdisk_remus.td_queue_read = primary_queue_read;
 	tapdisk_remus.td_queue_write = primary_queue_write;
-	s->queue_flush = client_flush;
 
 	s->stream_fd.fd = -1;
 	s->stream_fd.id = -1;
@@ -1510,16 +1511,23 @@ static void ctl_request(event_id_t id, char mode, void *private)
 		return;
 	}
 
-	/* TODO: need to get driver somehow */
 	msg[rc] = '\0';
-	if (!strncmp(msg, "flush", 5)) {
-		if (s->queue_flush)
-			if ((rc = s->queue_flush(driver))) {
-				RPRINTF("error passing flush request to backup");
-				ctl_respond(s, TDREMUS_FAIL);
-			}
-	} else {
+	if (strncmp(msg, "flush", 5)) {
 		RPRINTF("unknown command: %s\n", msg);
+		ctl_respond(s, TDREMUS_FAIL);
+		return;
+	}
+
+	if (s->mode != mode_primary) {
+		RPRINTF("We are not in primary mode\n");
+		ctl_respond(s, TDREMUS_FAIL);
+		return;
+	}
+
+	rc = client_flush(driver);
+	if (rc) {
+		RPRINTF("error passing flush request to backup");
+		ctl_respond(s, TDREMUS_FAIL);
 	}
 }
 
