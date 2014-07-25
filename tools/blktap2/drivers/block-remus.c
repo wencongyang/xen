@@ -151,9 +151,6 @@ typedef struct poll_fd {
 } poll_fd_t;
 
 struct tdremus_state {
-//  struct tap_disk* driver;
-	void* driver_data;
-
   /* XXX: this is needed so that the server can perform operations on
    * the driver from the stream_fd event handler. fix this. */
 	td_driver_t *tdremus_driver;
@@ -731,10 +728,24 @@ static int mwrite(int fd, void* buf, size_t len)
 
 static void inline close_stream_fd(struct tdremus_state *s)
 {
+	if (s->stream_fd.fd < 0)
+		return;
+
 	/* XXX: -2 is magic. replace with macro perhaps? */
 	tapdisk_server_unregister_event(s->stream_fd.id);
 	close(s->stream_fd.fd);
 	s->stream_fd.fd = -2;
+}
+
+static void close_server_fd(struct tdremus_state *s)
+{
+	if (s->server_fd.fd < 0)
+		return;
+
+	tapdisk_server_unregister_event(s->server_fd.id);
+	s->server_fd.id = -1;
+	close(s->stream_fd.fd);
+	s->stream_fd.fd = -1;
 }
 
 /* primary functions */
@@ -1347,12 +1358,7 @@ static int unprotected_start(td_driver_t *driver)
 	/* close the server socket */
 	close_stream_fd(s);
 
-	/* unregister the replication stream */
-	tapdisk_server_unregister_event(s->server_fd.id);
-
-	/* close the replication stream */
-	close(s->server_fd.fd);
-	s->server_fd.fd = -1;
+	close_server_fd(s);
 
 	/* install the unprotected read/write handlers */
 	tapdisk_remus.td_queue_read = unprotected_queue_read;
@@ -1553,27 +1559,27 @@ static int ctl_open(td_driver_t *driver, const char* name)
 			s->ctl_path[i] = '_';
 	}
 	if (asprintf(&s->msg_path, "%s.msg", s->ctl_path) < 0)
-		goto err_ctlfifo;
+		goto err_setmsgfifo;
 
 	if (mkfifo(s->ctl_path, S_IRWXU|S_IRWXG|S_IRWXO) && errno != EEXIST) {
 		RPRINTF("error creating control FIFO %s: %d\n", s->ctl_path, errno);
-		goto err_msgfifo;
+		goto err_mkctlfifo;
 	}
 
 	if (mkfifo(s->msg_path, S_IRWXU|S_IRWXG|S_IRWXO) && errno != EEXIST) {
 		RPRINTF("error creating message FIFO %s: %d\n", s->msg_path, errno);
-		goto err_msgfifo;
+		goto err_mkmsgfifo;
 	}
 
 	/* RDWR so that fd doesn't block select when no writer is present */
 	if ((s->ctl_fd.fd = open(s->ctl_path, O_RDWR)) < 0) {
 		RPRINTF("error opening control FIFO %s: %d\n", s->ctl_path, errno);
-		goto err_msgfifo;
+		goto err_openctlfifo;
 	}
 
 	if ((s->msg_fd.fd = open(s->msg_path, O_RDWR)) < 0) {
 		RPRINTF("error opening message FIFO %s: %d\n", s->msg_path, errno);
-		goto err_openctlfifo;
+		goto err_openmsgfifo;
 	}
 
 	RPRINTF("control FIFO %s\n", s->ctl_path);
@@ -1581,35 +1587,44 @@ static int ctl_open(td_driver_t *driver, const char* name)
 
 	return 0;
 
- err_openctlfifo:
+err_openmsgfifo:
 	close(s->ctl_fd.fd);
- err_msgfifo:
+	s->ctl_fd.fd = -1;
+err_openctlfifo:
+	unlink(s->ctl_path);
+err_mkmsgfifo:
+	unlink(s->msg_path);
+err_mkctlfifo:
 	free(s->msg_path);
 	s->msg_path = NULL;
- err_ctlfifo:
+err_setmsgfifo:
 	free(s->ctl_path);
 	s->ctl_path = NULL;
 	return -1;
 }
 
-static void ctl_close(td_driver_t *driver)
+static void ctl_close(struct tdremus_state *s)
 {
-	struct tdremus_state *s = (struct tdremus_state *)driver->data;
-
-	/* TODO: close *all* connections */
-
-	if(s->ctl_fd.fd)
+	if(s->ctl_fd.fd) {
 		close(s->ctl_fd.fd);
+		s->ctl_fd.fd = -1;
+	}
 
 	if (s->ctl_path) {
 		unlink(s->ctl_path);
 		free(s->ctl_path);
 		s->ctl_path = NULL;
 	}
+
 	if (s->msg_path) {
 		unlink(s->msg_path);
 		free(s->msg_path);
 		s->msg_path = NULL;
+	}
+
+	if (s->msg_fd.fd) {
+		close(s->msg_fd.fd);
+		s->msg_fd.fd = -1;
 	}
 }
 
@@ -1626,6 +1641,16 @@ static int ctl_register(struct tdremus_state *s)
 	}
 
 	return 0;
+}
+
+static void ctl_unregister(struct tdremus_state *s)
+{
+	RPRINTF("unregistering ctl fifo\n");
+
+	if (s->ctl_fd.id >= 0) {
+		tapdisk_server_unregister_event(s->ctl_fd.id);
+		s->ctl_fd.id = -1;
+	}
 }
 
 /* interface */
@@ -1658,13 +1683,12 @@ static int tdremus_open(td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 
 	if ((rc = ctl_open(driver, name))) {
 		RPRINTF("error setting up control channel\n");
-		free(s->driver_data);
 		return rc;
 	}
 
 	if ((rc = ctl_register(s))) {
 		RPRINTF("error registering control channel\n");
-		free(s->driver_data);
+		ctl_close(s);
 		return rc;
 	}
 
@@ -1687,19 +1711,11 @@ static int tdremus_close(td_driver_t *driver)
 	RPRINTF("closing\n");
 	if (s->ramdisk.inprogress)
 		hashtable_destroy(s->ramdisk.inprogress, 0);
-	
-	if (s->driver_data) {
-		free(s->driver_data);
-		s->driver_data = NULL;
-	}
-	if (s->server_fd.fd >= 0) {
-		close(s->server_fd.fd);
-		s->server_fd.fd = -1;
-	}
-	if (s->stream_fd.fd >= 0)
-		close_stream_fd(s);
 
-	ctl_close(driver);
+	close_server_fd(s);
+	close_stream_fd(s);
+	ctl_unregister(s);
+	ctl_close(s);
 
 	return 0;
 }
