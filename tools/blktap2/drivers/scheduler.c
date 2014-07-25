@@ -160,6 +160,31 @@ scheduler_run_events(scheduler_t *s)
 	}
 }
 
+static int
+get_free_id(scheduler_t *s)
+{
+	event_t *event, *tmp;
+	int old_uuid = s->uuid;
+	int id = s->uuid++;
+
+	if (!s->uuid)
+		s->uuid++;
+
+retry:
+	scheduler_for_each_event(s, event, tmp)
+		if (event->id == id) {
+			id = s->uuid++;
+			if (!s->uuid)
+				s->uuid++;
+			if (id == old_uuid)
+				return 0;
+
+			goto retry;
+		}
+
+	return id;
+}
+
 int
 scheduler_register_event(scheduler_t *s, char mode, int fd,
 			 int timeout, event_cb_t cb, void *private)
@@ -187,10 +212,12 @@ scheduler_register_event(scheduler_t *s, char mode, int fd,
 	event->deadline = now.tv_sec + timeout;
 	event->cb       = cb;
 	event->private  = private;
-	event->id       = s->uuid++;
+	event->id       = get_free_id(s);
 
-	if (!s->uuid)
-		s->uuid++;
+	if (!event->id) {
+		free(event);
+		return -EBUSY;
+	}
 
 	list_add_tail(&event->next, &s->events);
 
