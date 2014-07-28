@@ -167,15 +167,15 @@ get_free_id(scheduler_t *s)
 	int old_uuid = s->uuid;
 	int id = s->uuid++;
 
-	if (!s->uuid)
-		s->uuid++;
+	if (s->uuid < 0)
+		s->uuid = 1;
 
 retry:
 	scheduler_for_each_event(s, event, tmp)
 		if (event->id == id) {
 			id = s->uuid++;
-			if (!s->uuid)
-				s->uuid++;
+			if (s->uuid < 0)
+				s->uuid = 1;
 			if (id == old_uuid)
 				return 0;
 
