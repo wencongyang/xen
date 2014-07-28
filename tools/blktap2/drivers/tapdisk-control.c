@@ -700,7 +700,7 @@ tapdisk_control_accept(event_id_t id, char mode, void *private)
 					    connection->socket, 0,
 					    tapdisk_control_handle_request,
 					    connection);
-	if (err == -1) {
+	if (err < 0) {
 		close(fd);
 		free(connection);
 		EPRINTF("failed to register new control event: %d\n", err);
