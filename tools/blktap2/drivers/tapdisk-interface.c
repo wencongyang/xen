@@ -79,8 +79,7 @@ __td_open(td_image_t *image, td_disk_info_t *info)
 	}
 
 	if (!td_flag_test(driver->state, TD_DRIVER_OPEN)) {
-		err = driver->ops->td_open(driver, image->name, image->flags,
-					   vbd->uuid);
+		err = driver->ops->td_open(driver, image, vbd->uuid);
 		if (err) {
 			if (!image->driver)
 				tapdisk_driver_free(driver);

@@ -1152,8 +1152,6 @@ void backup_queue_read(td_driver_t *driver, td_request_t treq)
 {
 	struct tdremus_state *s = (struct tdremus_state *)driver->data;
 	int i;
-	if(!remus_image)
-		remus_image = treq.image;
 	
 	/* check if this read is queued in any currently ongoing flush */
 	if (ramdisk_read(&s->ramdisk, treq.sec, treq.secs, treq.buf)) {
@@ -1632,15 +1630,17 @@ static int ctl_register(struct tdremus_state *s)
 
 /* interface */
 
-static int tdremus_open(td_driver_t *driver, const char *name,
-			td_flag_t flags, td_uuid_t uuid)
+static int tdremus_open(td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 {
 	struct tdremus_state *s = (struct tdremus_state *)driver->data;
 	int rc;
+	const char *name = image->name;
+	td_flag_t flags = image->flags;
 
 	RPRINTF("opening %s\n", name);
 
 	device_vbd = tapdisk_server_get_vbd(uuid);
+	remus_image = image;
 
 	memset(s, 0, sizeof(*s));
 	s->server_fd.fd = -1;
