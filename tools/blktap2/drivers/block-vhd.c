@@ -59,6 +59,7 @@
 #include "tapdisk-driver.h"
 #include "tapdisk-interface.h"
 #include "tapdisk-disktype.h"
+#include "tapdisk-image.h"
 
 unsigned int SPB;
 
@@ -675,10 +676,11 @@ __vhd_open(td_driver_t *driver, const char *name, vhd_flag_t flags)
 }
 
 static int
-_vhd_open(td_driver_t *driver, const char *name, td_flag_t flags,
-	  td_uuid_t uuid)
+_vhd_open(td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 {
 	vhd_flag_t vhd_flags = 0;
+	const char *name = image->name;
+	td_flag_t flags = image->flags;
 
 	if (flags & TD_OPEN_RDONLY)
 		vhd_flags |= VHD_FLAG_OPEN_RDONLY;

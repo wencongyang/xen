@@ -585,11 +585,12 @@ static void ctl_request(event_id_t id, char mode, void *private)
 
 static int tdlog_close(td_driver_t*);
 
-static int tdlog_open(td_driver_t* driver, const char* name, td_flag_t flags,
-		      td_uuid_t uuid)
+static int tdlog_open(td_driver_t* driver, td_image_t *image, td_uuid_t uuid)
 {
   struct tdlog_state* s = (struct tdlog_state*)driver->data;
   int rc;
+  const char *name = image->name;
+  td_flag_t flags = image->flags;
 
   memset(s, 0, sizeof(*s));
 
