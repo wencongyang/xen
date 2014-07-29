@@ -40,6 +40,7 @@
 #include "tapdisk.h"
 #include "tapdisk-driver.h"
 #include "tapdisk-interface.h"
+#include "tapdisk-image.h"
 
 #define MAX_AIO_REQS         TAPDISK_DATA_REQUESTS
 
@@ -111,11 +112,12 @@ static int tdaio_get_image_info(int fd, td_disk_info_t *info)
 }
 
 /* Open the disk file and initialize aio state. */
-int tdaio_open(td_driver_t *driver, const char *name, td_flag_t flags,
-	       td_uuid_t uuid)
+int tdaio_open(td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 {
 	int i, fd, ret, o_flags;
 	struct tdaio_state *prv;
+	const char *name = image->name;
+	td_flag_t flags = image->flags;
 
 	ret = 0;
 	prv = (struct tdaio_state *)driver->data;

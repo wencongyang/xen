@@ -45,6 +45,7 @@
 #include "qcow.h"
 #include "blk.h"
 #include "atomicio.h"
+#include "tapdisk-image.h"
 
 /* *BSD has no O_LARGEFILE */
 #ifndef O_LARGEFILE
@@ -865,14 +866,15 @@ out:
 }
 
 /* Open the disk file and initialize qcow state. */
-int tdqcow_open (td_driver_t *driver, const char *name, td_flag_t flags,
-		 td_uuid_t uuid)
+int tdqcow_open (td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 {
 	int fd, len, i, ret, size, o_flags;
 	td_disk_info_t *bs = &(driver->info);
 	struct tdqcow_state   *s  = (struct tdqcow_state *)driver->data;
 	QCowHeader header;
 	uint64_t final_cluster = 0;
+	const char *name = image->name;
+	td_flag_t flags = image->flags;
 
  	DPRINTF("QCOW: Opening %s\n", name);
 
