@@ -517,12 +517,13 @@ block_cache_put_request(block_cache_t *cache, block_cache_request_t *breq)
 }
 
 static int
-block_cache_open(td_driver_t *driver, const char *name, td_flag_t flags,
-		 td_uuid_t uuid)
+block_cache_open(td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 {
 	int i, err;
 	radix_tree_t *tree;
 	block_cache_t *cache;
+	const char *name = image->name;
+	td_flag_t flags = image->flags;
 
 	if (!td_flag_test(flags, TD_OPEN_RDONLY))
 		return -EINVAL;
