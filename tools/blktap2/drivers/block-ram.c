@@ -40,6 +40,7 @@
 #include "tapdisk.h"
 #include "tapdisk-driver.h"
 #include "tapdisk-interface.h"
+#include "tapdisk-image.h"
 
 char *img;
 long int   disksector_size;
@@ -108,13 +109,14 @@ static int get_image_info(int fd, td_disk_info_t *info)
 }
 
 /* Open the disk file and initialize ram state. */
-int tdram_open (td_driver_t *driver, const char *name, td_flag_t flags,
-		td_uuid_t uuid)
+int tdram_open (td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 {
 	char *p;
 	uint64_t size;
 	int i, fd, ret = 0, count = 0, o_flags;
 	struct tdram_state *prv = (struct tdram_state *)driver->data;
+	const char *name = image->name;
+	td_flag_t flags = image->flags;
 
 	connections++;
 
