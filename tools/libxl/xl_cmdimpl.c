@@ -3754,6 +3754,9 @@ static void migrate_receive(int debug, int daemonize, int monitor,
     dom_info.send_fd = send_fd;
     dom_info.migration_domname_r = &migration_domname;
     dom_info.checkpointed_stream = remus;
+    if (remus == LIBXL_CHECKPOINTED_STREAM_COLO)
+        /* COLO uses stdout to send control message to master */
+        dom_info.quiet = 1;
 
     rc = create_domain(&dom_info);
     if (rc < 0) {
@@ -3768,7 +3771,8 @@ static void migrate_receive(int debug, int daemonize, int monitor,
         /* If we are here, it means that the sender (primary) has crashed.
          * TODO: Split-Brain Check.
          */
-        fprintf(stderr, "migration target: Remus Failover for domain %u\n",
+        fprintf(stderr, "migration target: %s Failover for domain %u\n",
+                remus == LIBXL_CHECKPOINTED_STREAM_COLO ? "COLO" : "Remus",
                 domid);
 
         /*
@@ -3785,15 +3789,21 @@ static void migrate_receive(int debug, int daemonize, int monitor,
             rc = libxl_domain_rename(ctx, domid, migration_domname,
                                      common_domname);
             if (rc)
-                fprintf(stderr, "migration target (Remus): "
+                fprintf(stderr, "migration target (%s): "
                         "Failed to rename domain from %s to %s:%d\n",
+                        remus == LIBXL_CHECKPOINTED_STREAM_COLO ? "COLO" : "Remus",
                         migration_domname, common_domname, rc);
         }
 
+        if (remus == LIBXL_CHECKPOINTED_STREAM_COLO)
+            /* The guest is running after failover in COLO mode */
+            exit(rc ? -ERROR_FAIL: 0);
+
         rc = libxl_domain_unpause(ctx, domid);
         if (rc)
-            fprintf(stderr, "migration target (Remus): "
+            fprintf(stderr, "migration target (%s): "
                     "Failed to unpause domain %s (id: %u):%d\n",
+                    remus == LIBXL_CHECKPOINTED_STREAM_COLO ? "COLO" : "Remus",
                     common_domname, domid, rc);
 
         exit(rc ? -ERROR_FAIL: 0);
@@ -3939,7 +3949,7 @@ int main_migrate_receive(int argc, char **argv)
     int debug = 0, daemonize = 1, monitor = 1, remus = 0;
     int opt;
 
-    SWITCH_FOREACH_OPT(opt, "Fedr", NULL, "migrate-receive", 0) {
+    SWITCH_FOREACH_OPT(opt, "Fedrc", NULL, "migrate-receive", 0) {
     case 'F':
         daemonize = 0;
         break;
@@ -3951,8 +3961,10 @@ int main_migrate_receive(int argc, char **argv)
         debug = 1;
         break;
     case 'r':
-        remus = 1;
+        remus = LIBXL_CHECKPOINTED_STREAM_REMUS;
         break;
+    case 'c':
+        remus = LIBXL_CHECKPOINTED_STREAM_COLO;
     }
 
     if (argc-optind != 0) {
@@ -7253,6 +7265,7 @@ int main_remus(int argc, char **argv)
     pid_t child = -1;
     uint8_t *config_data;
     int config_len;
+    int interval = 0;
 
     memset(&r_info, 0, sizeof(libxl_domain_remus_info));
     /* Defaults */
@@ -7263,9 +7276,10 @@ int main_remus(int argc, char **argv)
     r_info.netbuf = 1;
     r_info.diskbuf = 1;
 
-    SWITCH_FOREACH_OPT(opt, "Fbundi:s:N:e", NULL, "remus", 2) {
+    SWITCH_FOREACH_OPT(opt, "Fbundi:s:N:ec", NULL, "remus", 2) {
     case 'i':
         r_info.interval = atoi(optarg);
+        interval = 1;
         break;
     case 'F':
         r_info.unsafe = 1;
@@ -7291,6 +7305,8 @@ int main_remus(int argc, char **argv)
     case 'e':
         daemonize = 0;
         break;
+    case 'c':
+        r_info.colo = 1;
     }
 
     if (!r_info.unsafe &&
@@ -7302,6 +7318,16 @@ int main_remus(int argc, char **argv)
 
     domid = find_domain(argv[optind]);
     host = argv[optind + 1];
+
+    if (r_info.colo) {
+        if (!interval)
+            r_info.interval = 0;
+
+        if (r_info.interval + r_info.blackhole > 0) {
+            perror("option c is conflict with i or b");
+            exit(-1);
+        }
+    }
 
     if (!r_info.netbufscript)
         r_info.netbufscript = default_remus_netbufscript;
@@ -7317,8 +7343,9 @@ int main_remus(int argc, char **argv)
         if (!ssh_command[0]) {
             rune = host;
         } else {
-            if (asprintf(&rune, "exec %s %s xl migrate-receive -r %s",
+            if (asprintf(&rune, "exec %s %s xl migrate-receive %s %s",
                          ssh_command, host,
+                         r_info.colo ? "-c" : "-r",
                          daemonize ? "" : " -e") < 0)
                 return 1;
         }
@@ -7347,7 +7374,8 @@ int main_remus(int argc, char **argv)
      * domain to force failover
      */
     if (libxl_domain_info(ctx, 0, domid)) {
-        fprintf(stderr, "Remus: Primary domain has been destroyed.\n");
+        fprintf(stderr, "%s: Primary domain has been destroyed.\n",
+                r_info.colo ? "COLO" : "Remus");
         close(send_fd);
         return 0;
     }
@@ -7359,7 +7387,8 @@ int main_remus(int argc, char **argv)
     if (rc == ERROR_GUEST_TIMEDOUT)
         fprintf(stderr, "Failed to suspend domain at primary.\n");
     else {
-        fprintf(stderr, "Remus: Backup failed? resuming domain at primary.\n");
+        fprintf(stderr, "%s: Backup failed? resuming domain at primary.\n",
+                r_info.colo ? "COLO" : "Remus");
         libxl_domain_resume(ctx, domid, 1, 0);
     }
 
