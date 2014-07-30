@@ -66,9 +66,9 @@ static void devices_teardown_cb(libxl__egc *egc,
 /* checkpoint device setup and teardown */
 
 static libxl__checkpoint_device* checkpoint_device_init(libxl__egc *egc,
-                                              libxl__checkpoint_devices_state *cds,
-                                              libxl__checkpoint_device_kind kind,
-                                              void *libxl_dev)
+                libxl__checkpoint_devices_state *cds,
+                libxl__checkpoint_device_kind kind,
+                void *libxl_dev)
 {
     libxl__checkpoint_device *dev = NULL;
 
@@ -83,9 +83,10 @@ static libxl__checkpoint_device* checkpoint_device_init(libxl__egc *egc,
 }
 
 static void checkpoint_devices_setup(libxl__egc *egc,
-                                libxl__checkpoint_devices_state *cds);
+                                     libxl__checkpoint_devices_state *cds);
 
-void libxl__checkpoint_devices_setup(libxl__egc *egc, libxl__checkpoint_devices_state *cds)
+void libxl__checkpoint_devices_setup(libxl__egc *egc,
+                                     libxl__checkpoint_devices_state *cds)
 {
     int i, rc;
 
@@ -131,7 +132,7 @@ out:
 }
 
 static void checkpoint_devices_setup(libxl__egc *egc,
-                                libxl__checkpoint_devices_state *cds)
+                                     libxl__checkpoint_devices_state *cds)
 {
     int i, rc;
     libxl__checkpoint_device *dev;
@@ -180,14 +181,18 @@ static void devices_setup_cb(libxl__egc *egc,
     for (i = 0; i < cds->num_devices; i++) {
         dev = cds->dev[i];
 
-        if (!dev->aodev.rc || dev->aodev.rc == ERROR_CHECKPOINT_DEVOPS_DOES_NOT_MATCH)
+        if (!dev->aodev.rc ||
+            dev->aodev.rc == ERROR_CHECKPOINT_DEVOPS_DOES_NOT_MATCH)
             continue;
 
         rc = dev->aodev.rc;
         goto out;
     }
 
-    /* if the error is still ERROR_CHECKPOINT_DEVOPS_DOES_NOT_MATCH, begin next iter */
+    /*
+     * if the error is still ERROR_CHECKPOINT_DEVOPS_DOES_NOT_MATCH,
+     * begin next iter
+     */
     if (rc == ERROR_CHECKPOINT_DEVOPS_DOES_NOT_MATCH) {
         checkpoint_devices_setup(egc, cds);
         return;
@@ -198,7 +203,7 @@ out:
 }
 
 void libxl__checkpoint_devices_teardown(libxl__egc *egc,
-                                   libxl__checkpoint_devices_state *cds)
+                                        libxl__checkpoint_devices_state *cds)
 {
     int i;
     libxl__checkpoint_device *dev;
@@ -260,12 +265,12 @@ static void devices_checkpoint_cb(libxl__egc *egc,
 
 /* API implementations */
 
-#define define_checkpoint_api(api)                                \
-void libxl__checkpoint_devices_##api(libxl__egc *egc,                        \
-                                libxl__checkpoint_devices_state *cds)        \
+#define define_checkpoint_api(api)                                      \
+void libxl__checkpoint_devices_##api(libxl__egc *egc,                   \
+                                libxl__checkpoint_devices_state *cds)   \
 {                                                                       \
     int i;                                                              \
-    libxl__checkpoint_device *dev;                                           \
+    libxl__checkpoint_device *dev;                                      \
                                                                         \
     STATE_AO_GC(cds->ao);                                               \
                                                                         \
