@@ -27,13 +27,13 @@ typedef struct libxl__remus_drbd_disk {
 } libxl__remus_drbd_disk;
 
 /*----- helper functions, for async calls -----*/
-static void drbd_async_call(libxl__remus_device *dev,
-                            void func(libxl__remus_device *),
+static void drbd_async_call(libxl__checkpoint_device *dev,
+                            void func(libxl__checkpoint_device *),
                             libxl__ev_child_callback callback)
 {
     int pid = -1, rc;
     libxl__ao_device *aodev = &dev->aodev;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     /* Fork and call */
     pid = libxl__ev_child_fork(gc, &aodev->child, callback);
@@ -54,21 +54,21 @@ static void drbd_async_call(libxl__remus_device *dev,
 
 out:
     aodev->rc = rc;
-    aodev->callback(dev->rds->egc, aodev);
+    aodev->callback(dev->cds->egc, aodev);
 }
 
 /*----- init() and cleanup() -----*/
-static int drbd_init(libxl__remus_devices_state *rds)
+static int drbd_init(libxl__checkpoint_devices_state *cds)
 {
-    STATE_AO_GC(rds->ao);
+    STATE_AO_GC(cds->ao);
 
-    rds->drbd_probe_script = GCSPRINTF("%s/block-drbd-probe",
+    cds->drbd_probe_script = GCSPRINTF("%s/block-drbd-probe",
                                        libxl__xen_script_dir_path());
 
     return 0;
 }
 
-static void drbd_cleanup(libxl__remus_devices_state *rds)
+static void drbd_cleanup(libxl__checkpoint_devices_state *cds)
 {
     return;
 }
@@ -82,21 +82,21 @@ static void match_async_exec_cb(libxl__egc *egc,
 
 /* implementations */
 
-static void match_async_exec(libxl__egc *egc, libxl__remus_device *dev);
+static void match_async_exec(libxl__egc *egc, libxl__checkpoint_device *dev);
 
-static void drbd_setup(libxl__remus_device *dev)
+static void drbd_setup(libxl__checkpoint_device *dev)
 {
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
-    match_async_exec(dev->rds->egc, dev);
+    match_async_exec(dev->cds->egc, dev);
 }
 
-static void match_async_exec(libxl__egc *egc, libxl__remus_device *dev)
+static void match_async_exec(libxl__egc *egc, libxl__checkpoint_device *dev)
 {
     int arraysize, nr = 0, rc;
     const libxl_device_disk *disk = dev->backend_dev;
     libxl__async_exec_state *aes = &dev->aodev.aes;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     /* setup env & args */
     arraysize = 1;
@@ -107,12 +107,12 @@ static void match_async_exec(libxl__egc *egc, libxl__remus_device *dev)
     arraysize = 3;
     nr = 0;
     GCNEW_ARRAY(aes->args, arraysize);
-    aes->args[nr++] = dev->rds->drbd_probe_script;
+    aes->args[nr++] = dev->cds->drbd_probe_script;
     aes->args[nr++] = disk->pdev_path;
     aes->args[nr++] = NULL;
     assert(nr <= arraysize);
 
-    aes->ao = dev->rds->ao;
+    aes->ao = dev->cds->ao;
     aes->what = GCSPRINTF("%s %s", aes->args[0], aes->args[1]);
     aes->timeout_ms = LIBXL_HOTPLUG_TIMEOUT * 1000;
     aes->callback = match_async_exec_cb;
@@ -137,14 +137,14 @@ static void match_async_exec_cb(libxl__egc *egc,
 {
     int rc;
     libxl__ao_device *aodev = CONTAINER_OF(aes, *aodev, aes);
-    libxl__remus_device *dev = CONTAINER_OF(aodev, *dev, aodev);
+    libxl__checkpoint_device *dev = CONTAINER_OF(aodev, *dev, aodev);
     libxl__remus_drbd_disk *drbd_disk;
     const libxl_device_disk *disk = dev->backend_dev;
 
     STATE_AO_GC(aodev->ao);
 
     if (status) {
-        rc = ERROR_REMUS_DEVOPS_DOES_NOT_MATCH;
+        rc = ERROR_CHECKPOINT_DEVOPS_DOES_NOT_MATCH;
         goto out;
     }
 
@@ -167,14 +167,14 @@ out:
     aodev->callback(egc, aodev);
 }
 
-static void drbd_teardown(libxl__remus_device *dev)
+static void drbd_teardown(libxl__checkpoint_device *dev)
 {
     libxl__remus_drbd_disk *drbd_disk = dev->concrete_data;
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     close(drbd_disk->ctl_fd);
     dev->aodev.rc = 0;
-    dev->aodev.callback(dev->rds->egc, &dev->aodev);
+    dev->aodev.callback(dev->cds->egc, &dev->aodev);
 }
 
 /*----- checkpointing APIs -----*/
@@ -187,9 +187,9 @@ static void chekpoint_async_call_done(libxl__egc *egc,
 /* API implementations */
 
 /* this op will not wait and block, so implement as sync op */
-static void drbd_postsuspend(libxl__remus_device *dev)
+static void drbd_postsuspend(libxl__checkpoint_device *dev)
 {
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     libxl__remus_drbd_disk *rdd = dev->concrete_data;
 
@@ -199,20 +199,20 @@ static void drbd_postsuspend(libxl__remus_device *dev)
     }
 
     dev->aodev.rc = 0;
-    dev->aodev.callback(dev->rds->egc, &dev->aodev);
+    dev->aodev.callback(dev->cds->egc, &dev->aodev);
 }
 
 
-static void drbd_preresume_async(libxl__remus_device *dev);
+static void drbd_preresume_async(libxl__checkpoint_device *dev);
 
-static void drbd_preresume(libxl__remus_device *dev)
+static void drbd_preresume(libxl__checkpoint_device *dev)
 {
-    STATE_AO_GC(dev->rds->ao);
+    STATE_AO_GC(dev->cds->ao);
 
     drbd_async_call(dev, drbd_preresume_async, chekpoint_async_call_done);
 }
 
-static void drbd_preresume_async(libxl__remus_device *dev)
+static void drbd_preresume_async(libxl__checkpoint_device *dev)
 {
     libxl__remus_drbd_disk *rdd = dev->concrete_data;
     int ackwait = rdd->ackwait;
@@ -231,7 +231,7 @@ static void chekpoint_async_call_done(libxl__egc *egc,
 {
     int rc;
     libxl__ao_device *aodev = CONTAINER_OF(child, *aodev, child);
-    libxl__remus_device *dev = CONTAINER_OF(aodev, *dev, aodev);
+    libxl__checkpoint_device *dev = CONTAINER_OF(aodev, *dev, aodev);
     libxl__remus_drbd_disk *rdd = dev->concrete_data;
 
     STATE_AO_GC(aodev->ao);
@@ -249,8 +249,8 @@ out:
     aodev->callback(egc, aodev);
 }
 
-const libxl__remus_device_subkind_ops remus_device_drbd_disk = {
-    .kind = LIBXL__REMUS_DEVICE_DISK,
+const libxl__checkpoint_device_subkind_ops remus_device_drbd_disk = {
+    .kind = LIBXL__CHECKPOINT_DEVICE_DISK,
     .init = drbd_init,
     .cleanup = drbd_cleanup,
     .setup = drbd_setup,
