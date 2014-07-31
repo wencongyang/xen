@@ -82,12 +82,6 @@ static const disk_info_t block_cache_disk = {
        1,
 };
 
-static const disk_info_t vhd_index_disk = {
-       "vhdi",
-       "vhd index image (vhdi)",
-       1,
-};
-
 static const disk_info_t log_disk = {
 	"log",
 	"write logger (log)",
@@ -110,9 +104,8 @@ const disk_info_t *tapdisk_disk_types[] = {
 	[DISK_TYPE_QCOW]	= &qcow_disk,
 	[DISK_TYPE_BLOCK_CACHE] = &block_cache_disk,
 	[DISK_TYPE_LOG]	= &log_disk,
-	[DISK_TYPE_VINDEX]	= &vhd_index_disk,
 	[DISK_TYPE_REMUS]	= &remus_disk,
-	0,
+	[DISK_TYPE_MAX]		= NULL,
 };
 
 extern struct tap_disk tapdisk_aio;
@@ -137,10 +130,9 @@ const struct tap_disk *tapdisk_disk_drivers[] = {
 	[DISK_TYPE_RAM]         = &tapdisk_ram,
 	[DISK_TYPE_QCOW]        = &tapdisk_qcow,
 	[DISK_TYPE_BLOCK_CACHE] = &tapdisk_block_cache,
-	[DISK_TYPE_VINDEX]      = &tapdisk_vhd_index,
 	[DISK_TYPE_LOG]         = &tapdisk_log,
 	[DISK_TYPE_REMUS]       = &tapdisk_remus,
-	0,
+	[DISK_TYPE_MAX]         = NULL,
 };
 
 int
