@@ -110,4 +110,52 @@ int td_replication_server_restart(td_replication_connect_t *t);
  */
 int td_replication_client_start(td_replication_connect_t *t);
 
+/* I/O replication */
+typedef struct ramdisk ramdisk_t;
+struct ramdisk {
+	size_t sector_size;
+	const char *log_prefix;
+	td_image_t *image;
+
+	/* private */
+	/* count of outstanding requests to the base driver */
+	size_t inflight;
+	/* prev holds the requests to be flushed, while inprogress holds
+	 * requests being flushed. When requests complete, they are removed
+	 * from inprogress.
+	 * Whenever a new flush is merged with ongoing flush (i.e, prev),
+	 * we have to make sure that none of the new requests overlap with
+	 * ones in "inprogress". If it does, keep it back in prev and dont issue
+	 * IO until the current one finishes. If we allow this IO to proceed,
+	 * we might end up with two "overlapping" requests in the disk's queue and
+	 * the disk may not offer any guarantee on which one is written first.
+	 * IOW, make sure we dont create a write-after-write time ordering constraint.
+	 */
+	struct hashtable *prev;
+	struct hashtable *inprogress;
+};
+
+void ramdisk_init(ramdisk_t *ramdisk);
+void ramdisk_destroy(ramdisk_t *ramdisk);
+
+/* flush pending contents to disk */
+int ramdisk_flush(ramdisk_t *ramdisk);
+/* flush new contents to disk */
+int ramdisk_start_flush(ramdisk_t *ramdisk, struct hashtable **new);
+int ramdisk_writes_inflight(ramdisk_t *ramdisk);
+
+/*
+ * try to read from ramdisk. Return -1 if some sectors are not in
+ * ramdisk. Otherwise, return 0.
+ */
+int ramdisk_read(struct ramdisk *ramdisk, uint64_t sector,
+		 int nb_sectors, char *buf);
+
+/* create a new hashtable that can be used by ramdisk */
+struct hashtable *ramdisk_new_hashtable(void);
+int ramdisk_write_to_hashtable(struct hashtable *h, uint64_t sector,
+			       int nb_sectors, size_t sector_size, char* buf,
+			       const char *log_prefix);
+void ramdisk_destroy_hashtable(struct hashtable *h);
+
 #endif

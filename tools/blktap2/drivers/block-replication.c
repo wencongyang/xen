@@ -15,6 +15,10 @@
 
 #include "tapdisk-server.h"
 #include "block-replication.h"
+#include "tapdisk-interface.h"
+#include "hashtable.h"
+#include "hashtable_itr.h"
+#include "hashtable_utility.h"
 
 #include <string.h>
 #include <errno.h>
@@ -29,6 +33,8 @@
 #undef EPRINTF
 #define DPRINTF(_f, _a...) syslog (LOG_DEBUG, "%s: " _f, log_prefix, ## _a)
 #define EPRINTF(_f, _a...) syslog (LOG_ERR, "%s: " _f, log_prefix, ## _a)
+
+#define RAMDISK_HASHSIZE 128
 
 /* connection status */
 enum {
@@ -465,4 +471,450 @@ static void td_replication_connect_event(event_id_t id, char mode,
 
 fail:
 	td_replication_client_failed(t, rc);
+}
+
+
+/* I/O replication */
+static void replicated_write_callback(td_request_t treq, int err)
+{
+	ramdisk_t *ramdisk = treq.cb_data;
+	td_vbd_request_t *vreq = treq.private;
+	int i;
+	uint64_t start;
+	const char *log_prefix = ramdisk->log_prefix;
+
+	/* the write failed for now, lets panic. this is very bad */
+	if (err) {
+		EPRINTF("ramdisk write failed, disk image is not consistent\n");
+		exit(-1);
+	}
+
+	/*
+	 * The write succeeded. let's pull the vreq off whatever request list
+	 * it is on and free() it
+	 */
+	list_del(&vreq->next);
+	free(vreq);
+
+	ramdisk->inflight--;
+	start = treq.sec;
+	for (i = 0; i < treq.secs; i++) {
+		hashtable_remove(ramdisk->inprogress, &start);
+		start++;
+	}
+	free(treq.buf);
+
+	if (!ramdisk->inflight && ramdisk->prev)
+		ramdisk_flush(ramdisk);
+}
+
+static int
+create_write_request(ramdisk_t *ramdisk, td_sector_t sec, int secs, char *buf)
+{
+	td_request_t treq;
+	td_vbd_request_t *vreq;
+	td_vbd_t *vbd = ramdisk->image->private;
+
+	treq.op      = TD_OP_WRITE;
+	treq.buf     = buf;
+	treq.sec     = sec;
+	treq.secs    = secs;
+	treq.image   = ramdisk->image;
+	treq.cb      = replicated_write_callback;
+	treq.cb_data = ramdisk;
+	treq.id      = 0;
+	treq.sidx    = 0;
+
+	vreq         = calloc(1, sizeof(td_vbd_request_t));
+	treq.private = vreq;
+
+	if(!vreq)
+		return -1;
+
+	vreq->submitting = 1;
+	INIT_LIST_HEAD(&vreq->next);
+	tapdisk_vbd_move_request(treq.private, &vbd->pending_requests);
+
+	td_forward_request(treq);
+
+	vreq->submitting--;
+
+	return 0;
+}
+
+/* http://www.concentric.net/~Ttwang/tech/inthash.htm */
+static unsigned int uint64_hash(void *k)
+{
+	uint64_t key = *(uint64_t*)k;
+
+	key = (~key) + (key << 18);
+	key = key ^ (key >> 31);
+	key = key * 21;
+	key = key ^ (key >> 11);
+	key = key + (key << 6);
+	key = key ^ (key >> 22);
+
+	return (unsigned int)key;
+}
+
+static int rd_hash_equal(void *k1, void *k2)
+{
+	uint64_t key1, key2;
+
+	key1 = *(uint64_t*)k1;
+	key2 = *(uint64_t*)k2;
+
+	return key1 == key2;
+}
+
+static int uint64_compare(const void *k1, const void *k2)
+{
+	uint64_t u1 = *(uint64_t*)k1;
+	uint64_t u2 = *(uint64_t*)k2;
+
+	/* u1 - u2 is unsigned */
+	return u1 < u2 ? -1 : u1 > u2 ? 1 : 0;
+}
+
+/*
+ * set psectors to an array of the sector numbers in the hash, returning
+ * the number of entries (or -1 on error)
+ */
+static int ramdisk_get_sectors(struct hashtable *h, uint64_t **psectors,
+			       const char *log_prefix)
+{
+	struct hashtable_itr* itr;
+	uint64_t* sectors;
+	int count;
+
+	if (!(count = hashtable_count(h)))
+		return 0;
+
+	if (!(*psectors = malloc(count * sizeof(uint64_t)))) {
+		DPRINTF("ramdisk_get_sectors: error allocating sector map\n");
+		return -1;
+	}
+	sectors = *psectors;
+
+	itr = hashtable_iterator(h);
+	count = 0;
+	do {
+		sectors[count++] = *(uint64_t*)hashtable_iterator_key(itr);
+	} while (hashtable_iterator_advance(itr));
+	free(itr);
+
+	return count;
+}
+
+static int ramdisk_write_hash(struct hashtable *h, uint64_t sector, char *buf,
+			      size_t len, const char *log_prefix)
+{
+	char *v;
+	uint64_t *key;
+
+	if ((v = hashtable_search(h, &sector))) {
+		memcpy(v, buf, len);
+		return 0;
+	}
+
+	if (!(v = malloc(len))) {
+		DPRINTF("ramdisk_write_hash: malloc failed\n");
+		return -1;
+	}
+	memcpy(v, buf, len);
+	if (!(key = malloc(sizeof(*key)))) {
+		DPRINTF("ramdisk_write_hash: error allocating key\n");
+		free(v);
+		return -1;
+	}
+	*key = sector;
+	if (!hashtable_insert(h, key, v)) {
+		DPRINTF("ramdisk_write_hash failed on sector %" PRIu64 "\n", sector);
+		free(key);
+		free(v);
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * return -1 for OOM
+ * return -2 for merge lookup failure(should not happen)
+ * return -3 for WAW race
+ * return 0 on success.
+ */
+static int merge_requests(struct ramdisk *ramdisk, uint64_t start,
+			  size_t count, char **mergedbuf)
+{
+	char* buf;
+	char* sector;
+	int i;
+	uint64_t *key;
+	int rc = 0;
+	const char *log_prefix = ramdisk->log_prefix;
+
+	if (!(buf = valloc(count * ramdisk->sector_size))) {
+		DPRINTF("merge_request: allocation failed\n");
+		return -1;
+	}
+
+	for (i = 0; i < count; i++) {
+		if (!(sector = hashtable_search(ramdisk->prev, &start))) {
+			EPRINTF("merge_request: lookup failed on %"PRIu64"\n",
+				start);
+			free(buf);
+			rc = -2;
+			goto fail;
+		}
+
+		/* Check inprogress requests to avoid waw non-determinism */
+		if (hashtable_search(ramdisk->inprogress, &start)) {
+			DPRINTF("merge_request: WAR RACE on %"PRIu64"\n",
+				start);
+			free(buf);
+			rc = -3;
+			goto fail;
+		}
+
+		/*
+		 * Insert req into inprogress (brief period of duplication of
+		 * hash entries until they are removed from prev. Read tracking
+		 * would not be reading wrong entries)
+		 */
+		if (!(key = malloc(sizeof(*key)))) {
+			EPRINTF("%s: error allocating key\n", __FUNCTION__);
+			free(buf);
+			rc = -1;
+			goto fail;
+		}
+		*key = start;
+		if (!hashtable_insert(ramdisk->inprogress, key, NULL)) {
+			EPRINTF("%s failed to insert sector %" PRIu64 " into inprogress hash\n",
+				__FUNCTION__, start);
+			free(key);
+			free(buf);
+			rc = -1;
+			goto fail;
+		}
+
+		memcpy(buf + i * ramdisk->sector_size, sector, ramdisk->sector_size);
+		start++;
+	}
+
+	*mergedbuf = buf;
+	return 0;
+fail:
+	for (start--; i > 0; i--, start--)
+		hashtable_remove(ramdisk->inprogress, &start);
+	return rc;
+}
+
+int ramdisk_flush(ramdisk_t *ramdisk)
+{
+	uint64_t *sectors;
+	char *buf = NULL;
+	uint64_t base, batchlen;
+	int i, j, count = 0;
+	const char *log_prefix = ramdisk->log_prefix;
+
+	/* everything is in flight */
+	if (!ramdisk->prev)
+		return 0;
+
+	count = ramdisk_get_sectors(ramdisk->prev, &sectors, log_prefix);
+	if (count <= 0)
+		/* should not happen */
+		return count;
+
+	/* Create the inprogress table if empty */
+	if (!ramdisk->inprogress)
+		ramdisk->inprogress = ramdisk_new_hashtable();
+
+	/* sort and merge sectors to improve disk performance */
+	qsort(sectors, count, sizeof(*sectors), uint64_compare);
+
+	for (i = 0; i < count;) {
+		base = sectors[i++];
+		while (i < count && sectors[i] == sectors[i-1] + 1)
+			i++;
+		batchlen = sectors[i-1] - base + 1;
+
+		j = merge_requests(ramdisk, base, batchlen, &buf);
+		if (j) {
+			EPRINTF("ramdisk_flush: merge_requests failed:%s\n",
+				j == -1 ? "OOM" :
+					(j == -2 ? "missing sector" :
+						 "WAW race"));
+			if (j == -3)
+				continue;
+			free(sectors);
+			return -1;
+		}
+
+		/*
+		 * NOTE: create_write_request() creates a treq AND forwards
+		 * it down the driver chain
+		 *
+		 * TODO: handle create_write_request()'s error.
+		 */
+		create_write_request(ramdisk, base, batchlen, buf);
+
+		ramdisk->inflight++;
+
+		for (j = 0; j < batchlen; j++) {
+			buf = hashtable_search(ramdisk->prev, &base);
+			free(buf);
+			hashtable_remove(ramdisk->prev, &base);
+			base++;
+		}
+	}
+
+	if (!hashtable_count(ramdisk->prev)) {
+		/* everything is in flight */
+		hashtable_destroy(ramdisk->prev, 0);
+		ramdisk->prev = NULL;
+	}
+
+	free(sectors);
+	return 0;
+}
+
+int ramdisk_start_flush(ramdisk_t *ramdisk, struct hashtable **new)
+{
+	uint64_t *key;
+	char *buf;
+	int rc = 0;
+	int i, j, count, batchlen;
+	uint64_t *sectors;
+	const char *log_prefix = ramdisk->log_prefix;
+
+	if (!hashtable_count(*new))
+		return 0;
+
+	if (ramdisk->prev) {
+		/*
+		 * a flush request issued while a previous flush is still in
+		 * progress will merge with the previous request. If you want
+		 * the previous request to be consistent, wait for it to
+		 * complete.
+		 */
+		count = ramdisk_get_sectors(*new, &sectors, log_prefix);
+		if (count < 0 )
+			return count;
+
+		for (i = 0; i < count; i++) {
+			buf = hashtable_search(*new, sectors + i);
+			ramdisk_write_hash(ramdisk->prev, sectors[i], buf,
+					   ramdisk->sector_size, log_prefix);
+		}
+		free(sectors);
+
+		hashtable_destroy(*new, 1);
+	} else
+		ramdisk->prev = *new;
+
+	/*
+	 * We create a new hashtable so that new writes can be performed before
+	 * the old hashtable is completely drained.
+	 */
+	*new = ramdisk_new_hashtable();
+
+	return ramdisk_flush(ramdisk);
+}
+
+void ramdisk_init(ramdisk_t *ramdisk)
+{
+	ramdisk->inflight = 0;
+	ramdisk->prev = NULL;
+	ramdisk->inprogress = NULL;
+}
+
+void ramdisk_destroy(ramdisk_t *ramdisk)
+{
+	const char *log_prefix = ramdisk->log_prefix;
+
+	/*
+	 * ramdisk_destroy() is called only when we will close the tapdisk image.
+	 * In this case, there are no pending requests in vbd.
+	 *
+	 * If ramdisk->inflight is not 0, it means that the requests created by
+	 * us are still in vbd->pending_requests.
+	 */
+	if (ramdisk->inflight) {
+		/* should not happen */
+		EPRINTF("cannot destroy ramdisk\n");
+		return;
+	}
+
+	if (ramdisk->inprogress) {
+		hashtable_destroy(ramdisk->inprogress, 0);
+		ramdisk->inprogress = NULL;
+	}
+
+	if (ramdisk->prev) {
+		hashtable_destroy(ramdisk->prev, 1);
+		ramdisk->prev = NULL;
+	}
+}
+
+int ramdisk_writes_inflight(ramdisk_t *ramdisk)
+{
+	if (!ramdisk->inflight && !ramdisk->prev)
+		return 0;
+
+	return 1;
+}
+
+int ramdisk_read(struct ramdisk *ramdisk, uint64_t sector,
+		 int nb_sectors, char *buf)
+{
+	int i;
+	char *v;
+	uint64_t key;
+
+	for (i = 0; i < nb_sectors; i++) {
+		key = sector + i;
+		/* check whether it is queued in a previous flush request */
+		if (!(ramdisk->prev &&
+		    (v = hashtable_search(ramdisk->prev, &key)))) {
+			/* check whether it is an ongoing flush */
+			if (!(ramdisk->inprogress &&
+			    (v = hashtable_search(ramdisk->inprogress, &key))))
+				return -1;
+		}
+		memcpy(buf + i * ramdisk->sector_size, v, ramdisk->sector_size);
+	}
+
+	return 0;
+}
+
+struct hashtable *ramdisk_new_hashtable(void)
+{
+	return create_hashtable(RAMDISK_HASHSIZE, uint64_hash, rd_hash_equal);
+}
+
+int ramdisk_write_to_hashtable(struct hashtable *h, uint64_t sector,
+			       int nb_sectors, size_t sector_size, char* buf,
+			       const char *log_prefix)
+{
+	int i, rc;
+
+	for (i = 0; i < nb_sectors; i++) {
+		rc = ramdisk_write_hash(h, sector + i,
+					buf + i * sector_size,
+					sector_size, log_prefix);
+		if (rc)
+			return rc;
+	}
+
+	return 0;
+}
+
+void ramdisk_destroy_hashtable(struct hashtable *h)
+{
+	if (!h)
+		return;
+
+	hashtable_destroy(h, 1);
 }
