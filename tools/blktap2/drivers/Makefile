@@ -23,7 +23,7 @@ endif
 
 VHDLIBS    := -L$(LIBVHDDIR) -lvhd
 
-REMUS-OBJS  := block-remus.o
+REMUS-OBJS  := block-remus.o block-replication.o
 REMUS-OBJS  += hashtable.o
 REMUS-OBJS  += hashtable_itr.o
 REMUS-OBJS  += hashtable_utility.o
