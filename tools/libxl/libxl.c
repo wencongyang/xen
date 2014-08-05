@@ -2373,6 +2373,47 @@ static int libxl__device_disk_from_xs_be(libxl__gc *gc,
         goto cleanup;
     }
 
+    disk->format = LIBXL_DISK_FORMAT_UNKNOWN;
+
+    /* "tapdisk-params" is only for tapdisk */
+    tmp = xs_read(ctx->xsh, XBT_NULL,
+                  libxl__sprintf(gc, "%s/tapdisk-params", be_path), &len);
+    if (tmp) {
+        char *pdev_path;
+        /* tmp is "format:pdev_path" */
+        pdev_path = strchr(tmp, ':');
+        if (!pdev_path) {
+            LOG(ERROR, "corrupted tapdisk-params: \"%s\"\n", tmp);
+            free(tmp);
+            goto cleanup;
+        }
+        disk->pdev_path = strdup(pdev_path + 1);
+        *pdev_path = '\0';
+        rc = libxl_string_to_format(ctx, tmp, &disk->format);
+        if (rc) {
+            LOG(ERROR, "unknown disk format: %s\n", tmp);
+            free(tmp);
+            goto cleanup;
+        }
+        if (disk->format != LIBXL_DISK_FORMAT_VHD &&
+            disk->format != LIBXL_DISK_FORMAT_RAW &&
+            disk->format != LIBXL_DISK_FORMAT_REMUS &&
+            disk->format != LIBXL_DISK_FORMAT_COLO) {
+            LOG(ERROR, "unsupported tapdisk format: %s\n", tmp);
+            free(tmp);
+            goto cleanup;
+        }
+        free(tmp);
+
+        /*
+         * The backend is tapdisk, so we store tapdev in params, and
+         * phy in type(see device_disk_add())
+         */
+        disk->backend = LIBXL_DISK_BACKEND_TAP;
+
+        goto skip_type;
+    }
+
     /* "params" may not be present; but everything else must be. */
     tmp = xs_read(ctx->xsh, XBT_NULL,
                   libxl__sprintf(gc, "%s/params", be_path), &len);
@@ -2392,6 +2433,7 @@ static int libxl__device_disk_from_xs_be(libxl__gc *gc,
     }
     libxl_string_to_backend(ctx, tmp, &(disk->backend));
 
+skip_type:
     disk->vdev = xs_read(ctx->xsh, XBT_NULL,
                          libxl__sprintf(gc, "%s/dev", be_path), &len);
     if (!disk->vdev) {
@@ -2424,8 +2466,6 @@ static int libxl__device_disk_from_xs_be(libxl__gc *gc,
         goto cleanup;
     }
     disk->is_cdrom = !strcmp(tmp, "cdrom");
-
-    disk->format = LIBXL_DISK_FORMAT_UNKNOWN;
 
     return 0;
 cleanup:

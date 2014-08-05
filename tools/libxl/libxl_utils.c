@@ -319,6 +319,29 @@ out:
     return rc;
 }
 
+int libxl_string_to_format(libxl_ctx *ctx, char *s, libxl_disk_format *format)
+{
+    int rc = 0;
+    if (!strcmp(s, "aio")) {
+        *format = LIBXL_DISK_FORMAT_RAW;
+    } else if (!strcmp(s, "qcow")) {
+        *format = LIBXL_DISK_FORMAT_QCOW;
+    } else if (!strcmp(s, "qcow2")) {
+        *format = LIBXL_DISK_FORMAT_QCOW2;
+    } else if (!strcmp(s, "vhd")) {
+        *format = LIBXL_DISK_FORMAT_VHD;
+    } else if (!strcmp(s, "remus")) {
+        *format = LIBXL_DISK_FORMAT_REMUS;
+    } else if (!strcmp(s, "colo")) {
+        *format = LIBXL_DISK_FORMAT_COLO;
+    } else {
+        *format = LIBXL_DISK_FORMAT_UNKNOWN;
+        rc = ERROR_FAIL;
+    }
+
+    return rc;
+}
+
 int libxl_read_file_contents(libxl_ctx *ctx, const char *filename,
                              void **data_r, int *datalen_r) {
     GC_INIT(ctx);
