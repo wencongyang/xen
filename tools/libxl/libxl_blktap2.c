@@ -32,7 +32,8 @@ char *libxl__blktap_devpath(libxl__gc *gc,
     tap_list_t tap;
     int err;
 
-    if (format == LIBXL_DISK_FORMAT_REMUS)
+    if (format == LIBXL_DISK_FORMAT_REMUS ||
+        format == LIBXL_DISK_FORMAT_COLO)
         if (libxl__blktap_get_real_format(gc, disk, format) < 0)
             return NULL;
 
@@ -94,7 +95,8 @@ libxl_disk_format libxl__blktap_get_real_format(libxl__gc *gc,
 {
     const char *type;
 
-    if (format != LIBXL_DISK_FORMAT_REMUS)
+    if (format != LIBXL_DISK_FORMAT_REMUS &&
+        format != LIBXL_DISK_FORMAT_COLO)
         return format;
 
     /* The format of disk: ip:port|xxx:file */

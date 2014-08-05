@@ -689,7 +689,8 @@ static char ** libxl__build_device_model_args_new(libxl__gc *gc,
                 continue;
             }
 
-            if (disks[i].format == LIBXL_DISK_FORMAT_REMUS) {
+            if (disks[i].format == LIBXL_DISK_FORMAT_REMUS||
+                disks[i].format == LIBXL_DISK_FORMAT_COLO) {
                 real_format = libxl__blktap_get_real_format(gc,
                                                             disks[i].pdev_path,
                                                             disks[i].format);
