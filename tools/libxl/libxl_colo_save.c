@@ -18,7 +18,10 @@
 #include "libxl_internal.h"
 #include "libxl_colo.h"
 
+extern const libxl__checkpoint_device_subkind_ops colo_save_device_blktap2_disk;
+
 static const libxl__checkpoint_device_subkind_ops *colo_ops[] = {
+    &colo_save_device_blktap2_disk,
     NULL,
 };
 
@@ -49,7 +52,7 @@ void libxl__colo_save_setup(libxl__egc *egc, libxl__colo_save_state *css)
     css->svm_running = false;
 
     /* TODO: disk/nic support */
-    cds->device_kind_flags = 0;
+    cds->device_kind_flags = LIBXL__CHECKPOINT_DEVICE_DISK;
     cds->ops = colo_ops;
     cds->callback = colo_save_setup_done;
     cds->ao = ao;
