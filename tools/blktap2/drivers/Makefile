@@ -28,6 +28,8 @@ REMUS-OBJS  += hashtable.o
 REMUS-OBJS  += hashtable_itr.o
 REMUS-OBJS  += hashtable_utility.o
 
+COLO-OBJS += block-colo.o
+
 tapdisk2 tapdisk-stream tapdisk-diff $(QCOW_UTIL): AIOLIBS := -laio
 
 MEMSHRLIBS :=
@@ -74,6 +76,7 @@ BLK-OBJS-y  += aes.o
 BLK-OBJS-y  += md5.o
 BLK-OBJS-y  += $(PORTABLE-OBJS-y)
 BLK-OBJS-y  += $(REMUS-OBJS)
+BLK-OBJS-y  += $(COLO-OBJS)
 
 all: $(IBIN) lock-util qcow-util
 
