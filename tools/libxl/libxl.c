@@ -2414,7 +2414,8 @@ static int libxl__device_disk_from_xs_be(libxl__gc *gc,
         }
         if (disk->format != LIBXL_DISK_FORMAT_VHD &&
             disk->format != LIBXL_DISK_FORMAT_RAW &&
-            disk->format != LIBXL_DISK_FORMAT_REMUS) {
+            disk->format != LIBXL_DISK_FORMAT_REMUS &&
+            disk->format != LIBXL_DISK_FORMAT_COLO) {
             LOG(ERROR, "unsupported tapdisk format: %s\n", tmp);
             free(tmp);
             goto cleanup;

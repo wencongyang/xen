@@ -103,6 +103,7 @@ static void setformat(DiskParseContext *dpc, const char *str) {
     else if (!strcmp(str,"vhd"))    DSET(dpc,format,FORMAT,str,VHD);
     else if (!strcmp(str,"empty"))  DSET(dpc,format,FORMAT,str,EMPTY);
     else if (!strcmp(str,"remus"))  DSET(dpc,format,FORMAT,str,REMUS);
+    else if (!strcmp(str,"colo"))   DSET(dpc,format,FORMAT,str,COLO);
     else xlu__disk_err(dpc,str,"unknown value for format");
 }
 

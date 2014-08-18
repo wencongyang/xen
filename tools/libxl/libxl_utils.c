@@ -332,6 +332,8 @@ int libxl_string_to_format(libxl_ctx *ctx, char *s, libxl_disk_format *format)
         *format = LIBXL_DISK_FORMAT_VHD;
     } else if (!strcmp(s, "remus")) {
         *format = LIBXL_DISK_FORMAT_REMUS;
+    } else if (!strcmp(s, "colo")) {
+        *format = LIBXL_DISK_FORMAT_COLO;
     } else {
         *format = LIBXL_DISK_FORMAT_UNKNOWN;
         rc = ERROR_FAIL;

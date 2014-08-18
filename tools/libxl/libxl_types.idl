@@ -88,6 +88,7 @@ libxl_disk_format = Enumeration("disk_format", [
     (4, "RAW"),
     (5, "EMPTY"),
     (6, "REMUS"),
+    (7, "COLO"),
     ])
 
 libxl_disk_backend = Enumeration("disk_backend", [
