@@ -45,7 +45,7 @@ LIBXLU_LIBS =
 
 LIBXL_OBJS-y = osdeps.o libxl_paths.o libxl_bootloader.o flexarray.o
 ifeq ($(LIBXL_BLKTAP),y)
-LIBXL_OBJS-y += libxl_blktap2.o
+LIBXL_OBJS-y += libxl_blktap2.o libxl_colo_save_disk_blktap2.o
 else
 LIBXL_OBJS-y += libxl_noblktap2.o
 endif

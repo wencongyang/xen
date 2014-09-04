@@ -18,9 +18,35 @@
 #include "libxl_internal.h"
 #include "libxl_colo.h"
 
+extern const libxl__checkpoint_device_instance_ops colo_save_device_blktap2_disk;
+
 static const libxl__checkpoint_device_instance_ops *colo_ops[] = {
+    &colo_save_device_blktap2_disk,
     NULL,
 };
+
+/* ================= helper functions ================= */
+static int init_device_subkind(libxl__checkpoint_devices_state *cds)
+{
+    /* init device subkind-specific state in the libxl ctx */
+    int rc;
+    STATE_AO_GC(cds->ao);
+
+    rc = init_subkind_drbd_disk(cds);
+    if (rc) goto out;
+
+    rc = 0;
+out:
+    return rc;
+}
+
+static void cleanup_device_subkind(libxl__checkpoint_devices_state *cds)
+{
+    /* cleanup device subkind-specific state in the libxl ctx */
+    STATE_AO_GC(cds->ao);
+
+    cleanup_subkind_blktap2_disk(cds);
+}
 
 /* ================= colo: setup save environment ================= */
 static void colo_save_setup_done(libxl__egc *egc,
@@ -48,12 +74,15 @@ void libxl__colo_save_setup(libxl__egc *egc, libxl__colo_save_state *css)
     css->recv_fd = dss->recv_fd;
     css->svm_running = false;
 
-    /* TODO: disk/nic support */
-    cds->device_kind_flags = 0;
+    /* TODO: nic support */
+    cds->device_kind_flags = (1 << LIBXL__DEVICE_KIND_CHECKPOINT_DISK);
     cds->ops = colo_ops;
     cds->callback = colo_save_setup_done;
     cds->ao = ao;
     cds->domid = dss->domid;
+
+    if (init_device_subkind(cds))
+        goto out;
 
     libxl__checkpoint_devices_setup(egc, &css->cds);
 
@@ -92,6 +121,7 @@ static void colo_save_setup_failed(libxl__egc *egc,
         LOG(ERROR, "COLO: failed to teardown device after setup failed"
             " for guest with domid %u, rc %d", cds->domid, rc);
 
+    cleanup_device_subkind(cds);
     libxl__ao_complete(egc, ao, rc);
 }
 
@@ -122,6 +152,8 @@ static void colo_teardown_done(libxl__egc *egc,
 {
     libxl__colo_save_state *css = CONTAINER_OF(cds, *css, cds);
     libxl__domain_suspend_state *dss = CONTAINER_OF(css, *dss, css);
+
+    cleanup_device_subkind(cds);
     dss->callback(egc, dss, rc);
 }
 

@@ -854,6 +854,13 @@ static void initiate_domain_create(libxl__egc *egc,
     for (i = 0; i < d_config->num_disks; i++) {
         ret = libxl__device_disk_setdefault(gc, &d_config->disks[i]);
         if (ret) goto error_out;
+
+        /* TODO: cleanup it when destroying the domain */
+        if (d_config->disks[i].backend == LIBXL_DISK_BACKEND_TAP &&
+            (d_config->disks[i].format == LIBXL_DISK_FORMAT_REMUS ||
+             d_config->disks[i].format == LIBXL_DISK_FORMAT_COLO))
+            libxl__blktap_devpath(gc, d_config->disks[i].pdev_path,
+                                  d_config->disks[i].format);
     }
 
     dcs->bl.ao = ao;
