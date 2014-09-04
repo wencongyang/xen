@@ -3078,10 +3078,12 @@ struct libxl__colo_restore_state {
     int pae;
     int superpages;
     libxl__colo_callback *callback;
+    char *colo_agent_script;
 
     /* private, colo restore checkpoint state */
     libxl__domain_create_cb *saved_cb;
     void *crcs;
+    libxl__checkpoint_devices_state cds;
 };
 
 struct libxl__domain_create_state {
