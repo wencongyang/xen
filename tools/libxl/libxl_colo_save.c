@@ -231,6 +231,12 @@ void libxl__colo_save_setup(libxl__egc *egc, libxl__colo_save_state *css)
     css->vm_fd = -1;
     libxl__ev_child_init(&css->child);
 
+    if (dss->remus->netbufscript)
+        css->colo_agent_script = libxl__strdup(gc, dss->remus->netbufscript);
+    else
+        css->colo_agent_script = GCSPRINTF("%s/colo-agent-setup",
+                                           libxl__xen_script_dir_path());
+
     cds->device_kind_flags = (1 << LIBXL__DEVICE_KIND_CHECKPOINT_DISK) |
                              (1 << LIBXL__DEVICE_KIND_CHECKPOINT_NIC);
     cds->ops = colo_ops;
