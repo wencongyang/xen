@@ -57,7 +57,7 @@ LIBXL_OBJS-y += libxl_nonetbuffer.o
 endif
 
 LIBXL_OBJS-y += libxl_remus.o libxl_checkpoint_device.o libxl_remus_disk_drbd.o
-LIBXL_OBJS-y += libxl_colo_restore.o libxl_colo_save.o
+LIBXL_OBJS-y += libxl_colo_restore.o libxl_colo_save.o libxl_colo_nic.o
 
 LIBXL_OBJS-$(CONFIG_X86) += libxl_cpuid.o libxl_x86.o
 LIBXL_OBJS-$(CONFIG_ARM) += libxl_nocpuid.o libxl_arm.o
@@ -126,7 +126,7 @@ LIBXLU_OBJS = libxlu_cfg_y.o libxlu_cfg_l.o libxlu_cfg.o \
 	libxlu_disk_l.o libxlu_disk.o libxlu_vif.o libxlu_pci.o
 $(LIBXLU_OBJS): CFLAGS += $(CFLAGS_libxenctrl) # For xentoollog.h
 
-CLIENTS = xl testidl libxl-save-helper
+CLIENTS = xl testidl libxl-save-helper colo-tc
 
 CFLAGS_XL += $(CFLAGS_libxenlight)
 CFLAGS_XL += -Wshadow
@@ -247,6 +247,9 @@ libxl-save-helper: $(SAVE_HELPER_OBJS) libxenlight.so
 testidl: testidl.o libxlutil.so libxenlight.so
 	$(CC) $(LDFLAGS) -o $@ testidl.o libxlutil.so $(LDLIBS_libxenlight) $(LDLIBS_libxenctrl) $(APPEND_LDFLAGS)
 
+colo-tc: colo-tc.o
+	$(CC) $(LDFLAGS) -o $@ colo-tc.o
+
 .PHONY: install
 install: all
 	$(INSTALL_DIR) $(DESTDIR)$(SBINDIR)
@@ -256,6 +259,7 @@ install: all
 	$(INSTALL_DIR) $(DESTDIR)$(PRIVATE_BINDIR)
 	$(INSTALL_PROG) xl $(DESTDIR)$(SBINDIR)
 	$(INSTALL_PROG) libxl-save-helper $(DESTDIR)$(PRIVATE_BINDIR)
+	$(INSTALL_PROG) colo-tc $(DESTDIR)$(PRIVATE_BINDIR)
 	$(INSTALL_SHLIB) libxenlight.so.$(MAJOR).$(MINOR) $(DESTDIR)$(LIBDIR)
 	$(SYMLINK_SHLIB) libxenlight.so.$(MAJOR).$(MINOR) $(DESTDIR)$(LIBDIR)/libxenlight.so.$(MAJOR)
 	$(SYMLINK_SHLIB) libxenlight.so.$(MAJOR) $(DESTDIR)$(LIBDIR)/libxenlight.so

@@ -19,11 +19,161 @@
 #include "libxl_colo.h"
 
 extern const libxl__checkpoint_device_instance_ops colo_save_device_blktap2_disk;
+extern const libxl__checkpoint_device_instance_ops colo_save_device_nic;
 
 static const libxl__checkpoint_device_instance_ops *colo_ops[] = {
     &colo_save_device_blktap2_disk,
+    &colo_save_device_nic,
     NULL,
 };
+
+/* ================= colo-agent: setup, wait and teardown ================= */
+static void colo_start_new_checkpoint(libxl__egc *egc,
+                                      libxl__checkpoint_devices_state *cds,
+                                      int rc);
+static void colo_agent_async_wait_for_checkpoint(libxl__colo_save_state *css);
+static void colo_agent_async_call_done(libxl__egc *egc,
+                                       libxl__ev_child *child,
+                                       int pid,
+                                       int status);
+
+#define COMP_IOC_MAGIC          'k'
+#define COMP_IOCTWAIT           _IO(COMP_IOC_MAGIC, 0)
+#define COMP_IOCTFLUSH          _IO(COMP_IOC_MAGIC, 1)
+#define COMP_IOCTRESUME         _IO(COMP_IOC_MAGIC, 2)
+
+#define COLO_IO                 0x33
+#define COLO_CREATE_VM          _IO(COLO_IO, 0x00)
+#define COLO_RELEASE_VM         _IO(COLO_IO, 0x01)
+
+#define COMP_IOCTWAIT_TIMEOUT   5000
+
+static int colo_agent_setup(libxl__colo_save_state *css, int domid)
+{
+    int ret;
+
+    STATE_AO_GC(css->cds.ao);
+
+    css->fd = open("/dev/HA_compare", O_RDWR);
+    if (css->fd < 0) {
+        LOG(ERROR, "cannot open /dev/HA_compare");
+        return ERROR_FAIL;
+    }
+
+    ret = ioctl(css->fd, COLO_CREATE_VM, domid);
+    if (ret < 0) {
+        LOG(ERROR, "cannot pass vmid to colo-agent");
+        goto out;
+    }
+
+    css->vm_fd = ret;
+
+    return 0;
+
+out:
+    close(css->fd);
+    css->fd = -1;
+    return ERROR_FAIL;
+}
+
+static void colo_agent_preresume(libxl__colo_save_state *css)
+{
+    ioctl(css->vm_fd, COMP_IOCTFLUSH);
+}
+
+static void colo_agent_postresume(libxl__colo_save_state *css)
+{
+    ioctl(css->vm_fd, COMP_IOCTRESUME);
+}
+
+static void colo_agent_async_call(libxl__egc *egc,
+                                  libxl__colo_save_state *css,
+                                  void func(libxl__colo_save_state *),
+                                  libxl__ev_child_callback callback)
+{
+    int pid = -1, rc;
+
+    STATE_AO_GC(css->cds.ao);
+
+    /* Fork and call */
+    pid = libxl__ev_child_fork(gc, &css->child, callback);
+    if (pid == -1) {
+        LOG(ERROR, "unable to fork");
+        rc = ERROR_FAIL;
+        goto out;
+    }
+
+    if (!pid) {
+        /* child */
+        func(css);
+        /* notreached */
+        abort();
+    }
+
+    return;
+
+out:
+    callback(egc, &css->child, -1, 1);
+}
+
+static void colo_agent_wait_for_checkpoint(libxl__egc *egc,
+                                           libxl__colo_save_state *css)
+{
+    colo_agent_async_call(egc, css,
+                          colo_agent_async_wait_for_checkpoint,
+                          colo_agent_async_call_done);
+}
+
+static void colo_agent_async_wait_for_checkpoint(libxl__colo_save_state *css)
+{
+    int ret;
+
+again:
+    ret = ioctl(css->vm_fd, COMP_IOCTWAIT, COMP_IOCTWAIT_TIMEOUT);
+    if (ret < 0) {
+        if (errno == ERESTART)
+            goto again;
+
+        if (errno == ETIME)
+            _exit(0);
+
+        _exit(1);
+    }
+
+    _exit(0);
+}
+
+static void colo_agent_async_call_done(libxl__egc *egc,
+                                       libxl__ev_child *child,
+                                       int pid,
+                                       int status)
+{
+    libxl__colo_save_state *css = CONTAINER_OF(child, *css, child);
+
+    EGC_GC;
+
+    if (status) {
+        LOG(ERROR, "failed to wait for new checkpoint");
+        colo_start_new_checkpoint(egc, &css->cds, ERROR_FAIL);
+        return;
+    }
+
+    colo_start_new_checkpoint(egc, &css->cds, 0);
+}
+
+static void colo_agent_teardown(libxl__colo_save_state *css, int domid)
+{
+    if (css->vm_fd >= 0) {
+        close(css->vm_fd);
+        css->vm_fd = -1;
+        ioctl(css->fd, COLO_RELEASE_VM, domid);
+    }
+
+    if (css->fd >= 0) {
+        close(css->fd);
+        css->fd = -1;
+    }
+}
 
 /* ================= helper functions ================= */
 static int init_device_subkind(libxl__checkpoint_devices_state *cds)
@@ -31,6 +181,9 @@ static int init_device_subkind(libxl__checkpoint_devices_state *cds)
     /* init device subkind-specific state in the libxl ctx */
     int rc;
     STATE_AO_GC(cds->ao);
+
+    rc = init_subkind_colo_nic(cds);
+    if (rc) goto out;
 
     rc = init_subkind_drbd_disk(cds);
     if (rc) goto out;
@@ -46,6 +199,7 @@ static void cleanup_device_subkind(libxl__checkpoint_devices_state *cds)
     STATE_AO_GC(cds->ao);
 
     cleanup_subkind_blktap2_disk(cds);
+    cleanup_subkind_colo_nic(cds);
 }
 
 /* ================= colo: setup save environment ================= */
@@ -73,9 +227,12 @@ void libxl__colo_save_setup(libxl__egc *egc, libxl__colo_save_state *css)
     css->send_fd = dss->fd;
     css->recv_fd = dss->recv_fd;
     css->svm_running = false;
+    css->fd = -1;
+    css->vm_fd = -1;
+    libxl__ev_child_init(&css->child);
 
-    /* TODO: nic support */
-    cds->device_kind_flags = (1 << LIBXL__DEVICE_KIND_CHECKPOINT_DISK);
+    cds->device_kind_flags = (1 << LIBXL__DEVICE_KIND_CHECKPOINT_DISK) |
+                             (1 << LIBXL__DEVICE_KIND_CHECKPOINT_NIC);
     cds->ops = colo_ops;
     cds->callback = colo_save_setup_done;
     cds->ao = ao;
@@ -101,12 +258,17 @@ static void colo_save_setup_done(libxl__egc *egc,
     STATE_AO_GC(cds->ao);
 
     if (!rc) {
+        rc = colo_agent_setup(css, dss->domid);
+        if (rc)
+            goto failed;
         libxl__domain_suspend(egc, dss);
         return;
     }
 
     LOG(ERROR, "COLO: failed to setup device for guest with domid %u",
         dss->domid);
+
+failed:
     css->cds.callback = colo_save_setup_failed;
     libxl__checkpoint_devices_teardown(egc, &css->cds);
 }
@@ -154,6 +316,7 @@ static void colo_teardown_done(libxl__egc *egc,
     libxl__domain_suspend_state *dss = CONTAINER_OF(css, *dss, css);
 
     cleanup_device_subkind(cds);
+    colo_agent_teardown(css, dss->domid);
     dss->callback(egc, dss, rc);
 }
 
@@ -420,6 +583,8 @@ static void colo_read_svm_ready_done(libxl__egc *egc,
         goto out;
     }
 
+    colo_agent_preresume(css);
+
     css->svm_running = true;
     css->cds.callback = colo_preresume_cb;
     libxl__checkpoint_devices_preresume(egc, &css->cds);
@@ -488,6 +653,8 @@ static void colo_read_svm_resumed_done(libxl__egc *egc,
         goto out;
     }
 
+    colo_agent_postresume(css);
+
     ok = 1;
 
 out:
@@ -505,9 +672,6 @@ out:
 static void colo_device_commit_cb(libxl__egc *egc,
                                   libxl__checkpoint_devices_state *cds,
                                   int rc);
-static void colo_start_new_checkpoint(libxl__egc *egc,
-                                      libxl__checkpoint_devices_state *cds,
-                                      int rc);
 static void colo_send_data_done(libxl__egc *egc,
                                 libxl__datacopier_state *dc,
                                 int onwrite, int errnoval);
@@ -539,8 +703,7 @@ static void colo_device_commit_cb(libxl__egc *egc,
         goto out;
     }
 
-    /* TODO: wait a new checkpoint */
-    colo_start_new_checkpoint(egc, cds, 0);
+    colo_agent_wait_for_checkpoint(egc, css);
     return;
 
 out:
