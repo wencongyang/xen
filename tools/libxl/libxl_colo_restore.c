@@ -40,6 +40,9 @@ struct libxl__colo_restore_checkpoint_state {
     libxl__logdirty_switch lds;
     libxl__colo_restore_state *crs;
     int status;
+    /* used for teardown */
+    int teardown_devices;
+    int saved_rc;
 
     void (*callback)(libxl__egc *,
                      libxl__colo_restore_checkpoint_state *,
@@ -57,6 +60,13 @@ struct libxl__colo_restore_checkpoint_state {
 static void libxl__colo_restore_domain_resume_callback(void *data);
 static void libxl__colo_restore_domain_checkpoint_callback(void *data);
 static void libxl__colo_restore_domain_suspend_callback(void *data);
+
+extern const libxl__checkpoint_device_instance_ops colo_restore_device_nic;
+
+static const libxl__checkpoint_device_instance_ops *colo_restore_ops[] = {
+    &colo_restore_device_nic,
+    NULL,
+};
 
 /* ===================== colo: common functions ===================== */
 static void colo_enable_logdirty(libxl__colo_restore_state *crs, libxl__egc *egc)
@@ -145,6 +155,28 @@ static void colo_resume_vm(libxl__egc *egc,
     libxl__xc_domain_restore_done(egc, dcs, 0, 0, 0);
 
     return;
+}
+
+static int init_device_subkind(libxl__checkpoint_devices_state *cds)
+{
+    /* init device subkind-specific state in the libxl ctx */
+    int rc;
+    STATE_AO_GC(cds->ao);
+
+    rc = init_subkind_colo_nic(cds);
+    if (rc) goto out;
+
+    rc = 0;
+out:
+    return rc;
+}
+
+static void cleanup_device_subkind(libxl__checkpoint_devices_state *cds)
+{
+    /* cleanup device subkind-specific state in the libxl ctx */
+    STATE_AO_GC(cds->ao);
+
+    cleanup_subkind_colo_nic(cds);
 }
 
 
@@ -275,6 +307,9 @@ static void libxl__colo_domain_create_cb(libxl__egc *egc,
 
 
 /* ================ colo: teardown restore environment ================ */
+static void colo_restore_teardown_done(libxl__egc *egc,
+                                       libxl__checkpoint_devices_state *cds,
+                                       int rc);
 static void do_failover_done(libxl__egc *egc,
                              libxl__colo_restore_checkpoint_state* crcs,
                              int rc);
@@ -321,11 +356,38 @@ void libxl__colo_restore_teardown(libxl__egc *egc,
     EGC_GC;
 
     if (!dirty_bitmap)
-        goto do_failover;
+        goto teardown_devices;
 
     xc_hypercall_buffer_free_pages(CTX->xch, dirty_bitmap, NRPAGES(bsize));
 
-do_failover:
+teardown_devices:
+    crcs->saved_rc = rc;
+    if (!crcs->teardown_devices) {
+        colo_restore_teardown_done(egc, &crs->cds, 0);
+        return;
+    }
+
+    crs->cds.callback = colo_restore_teardown_done;
+    libxl__checkpoint_devices_teardown(egc, &crs->cds);
+}
+
+static void colo_restore_teardown_done(libxl__egc *egc,
+                                       libxl__checkpoint_devices_state *cds,
+                                       int rc)
+{
+    libxl__colo_restore_state *crs = CONTAINER_OF(cds, *crs, cds);
+    libxl__colo_restore_checkpoint_state *crcs = crs->crcs;
+    libxl__domain_create_state *dcs = CONTAINER_OF(crs, *dcs, crs);
+
+    EGC_GC;
+
+    if (rc)
+        LOG(ERROR, "COLO: failed to teardown device after setup failed"
+            " for guest with domid %u, rc %d", cds->domid, rc);
+
+    cleanup_device_subkind(cds);
+
+    rc = crcs->saved_rc;
     if (!rc) {
         crcs->callback = do_failover_done;
         do_failover(egc, crs);
@@ -417,6 +479,11 @@ static void colo_reenable_logdirty(libxl__egc *egc,
                                    int rc);
 static void colo_reenable_logdirty_done(libxl__egc *egc,
                                         libxl__logdirty_switch *lds,
+                                        int rc);
+static void colo_setup_checkpoint_devices(libxl__egc *egc,
+                                          libxl__colo_restore_state *crs);
+static void colo_restore_setup_cds_done(libxl__egc *egc,
+                                        libxl__checkpoint_devices_state *cds,
                                         int rc);
 
 static void libxl__colo_restore_domain_resume_callback(void *data)
@@ -529,7 +596,6 @@ static void colo_write_svm_resumed(libxl__egc *egc,
     dc->copywhat = crcs->copywhat[2];
     dc->writewhat = "colo stream";
     dc->callback = colo_common_send_data_done;
-    /* TODO: configure network */
     crcs->callback = NULL;
 
     rc = libxl__datacopier_start(dc);
@@ -552,12 +618,9 @@ static void colo_enable_logdirty_done(libxl__egc *egc,
                                       int rc)
 {
     libxl__colo_restore_checkpoint_state *crcs = CONTAINER_OF(lds, *crcs, lds);
-    libxl__domain_create_state *dcs = CONTAINER_OF(crcs->crs, *dcs, crs);
 
     /* Convenience aliases */
     libxl__colo_restore_state *const crs = crcs->crs;
-    libxl__save_helper_state *const shs = &dcs->shs;
-    const uint32_t domid = crs->domid;
 
     STATE_AO_GC(crs->ao);
 
@@ -571,19 +634,7 @@ static void colo_enable_logdirty_done(libxl__egc *egc,
         return;
     }
 
-    /* We have enabled secondary vm's logdirty, so we can unpause it now */
-    rc = libxl__domain_unpause(gc, domid);
-    if (rc) {
-        LOG(ERROR, "cannot unpause secondary vm");
-        goto out;
-    }
-
-    colo_write_svm_resumed(egc, crcs);
-
-    return;
-
-out:
-    libxl__xc_domain_saverestore_async_callback_done(egc, shs, 0);
+    colo_setup_checkpoint_devices(egc, crs);
 }
 
 static void colo_reenable_logdirty(libxl__egc *egc,
@@ -622,12 +673,73 @@ static void colo_reenable_logdirty_done(libxl__egc *egc,
 
     /* Convenience aliases */
     libxl__save_helper_state *const shs = &dcs->shs;
-    const uint32_t domid = crcs->crs->domid;
 
     STATE_AO_GC(crcs->crs->ao);
 
     if (rc) {
         LOG(ERROR, "cannot enable logdirty");
+        goto out;
+    }
+
+    colo_setup_checkpoint_devices(egc, crcs->crs);
+
+    return;
+
+out:
+    libxl__xc_domain_saverestore_async_callback_done(egc, shs, 0);
+}
+
+/*
+ * We cannot setup checkpoint devices in libxl__colo_restore_setup(),
+ * because the guest is not ready.
+ */
+static void colo_setup_checkpoint_devices(libxl__egc *egc,
+                                          libxl__colo_restore_state *crs)
+{
+    libxl__domain_create_state *dcs = CONTAINER_OF(crs, *dcs, crs);
+    libxl__colo_restore_checkpoint_state *crcs = crs->crcs;
+
+    /* Convenience aliases */
+    libxl__checkpoint_devices_state *cds = &crs->cds;
+    libxl__save_helper_state *const shs = &dcs->shs;
+
+    STATE_AO_GC(crs->ao);
+
+    crcs->teardown_devices = 1;
+
+    cds->device_kind_flags = (1 << LIBXL__DEVICE_KIND_VIF);
+    cds->callback = colo_restore_setup_cds_done;
+    cds->ao = ao;
+    cds->domid = crs->domid;
+    cds->ops = colo_restore_ops;
+
+    if (init_device_subkind(cds))
+        goto out;
+
+    libxl__checkpoint_devices_setup(egc, cds);
+    return;
+
+out:
+    libxl__xc_domain_saverestore_async_callback_done(egc, shs, 0);
+}
+
+static void colo_restore_setup_cds_done(libxl__egc *egc,
+                                        libxl__checkpoint_devices_state *cds,
+                                        int rc)
+{
+    libxl__colo_restore_state *crs = CONTAINER_OF(cds, *crs, cds);
+    libxl__domain_create_state *dcs = CONTAINER_OF(crs, *dcs, crs);
+    libxl__colo_restore_checkpoint_state *crcs = crs->crcs;
+
+    /* Convenience aliases */
+    libxl__save_helper_state *const shs = &dcs->shs;
+    const uint32_t domid = crs->domid;
+
+    STATE_AO_GC(cds->ao);
+
+    if (rc) {
+        LOG(ERROR, "COLO: failed to setup device for guest with domid %u",
+            cds->domid);
         goto out;
     }
 

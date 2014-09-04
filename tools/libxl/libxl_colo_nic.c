@@ -287,3 +287,26 @@ const libxl__checkpoint_device_instance_ops colo_save_device_nic = {
     .setup = colo_nic_save_setup,
     .teardown = colo_nic_save_teardown,
 };
+
+/* ======== secondary ======== */
+static void colo_nic_restore_setup(libxl__egc *egc,
+                                   libxl__checkpoint_device *dev)
+{
+    libxl__colo_restore_state *crs = CONTAINER_OF(dev->cds, *crs, cds);
+
+    colo_nic_setup(egc, dev, secondary, crs->colo_agent_script);
+}
+
+static void colo_nic_restore_teardown(libxl__egc *egc,
+                                      libxl__checkpoint_device *dev)
+{
+    libxl__colo_restore_state *crs = CONTAINER_OF(dev->cds, *crs, cds);
+
+    colo_nic_teardown(egc, dev, secondary, crs->colo_agent_script);
+}
+
+const libxl__checkpoint_device_instance_ops colo_restore_device_nic = {
+    .kind = LIBXL__DEVICE_KIND_VIF,
+    .setup = colo_nic_restore_setup,
+    .teardown = colo_nic_restore_teardown,
+};
