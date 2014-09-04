@@ -3208,6 +3208,7 @@ struct libxl__domain_create_state {
     /* private to domain_create */
     int guest_domid;
     int checkpointed_stream;
+    const char *colo_agent_script;
     libxl__domain_build_state build_state;
     libxl__colo_restore_state crs;
     libxl__bootloader_state bl;
