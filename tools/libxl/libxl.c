@@ -467,7 +467,8 @@ int libxl_domain_rename(libxl_ctx *ctx, uint32_t domid,
     return rc;
 }
 
-int libxl__domain_resume(libxl__gc *gc, uint32_t domid, int suspend_cancel)
+int libxl__domain_resume(libxl__gc *gc, uint32_t domid,
+                         int suspend_cancel, int read_savefile)
 {
     int rc = 0;
 
@@ -484,7 +485,7 @@ int libxl__domain_resume(libxl__gc *gc, uint32_t domid, int suspend_cancel)
     }
 
     if (type == LIBXL_DOMAIN_TYPE_HVM) {
-        rc = libxl__domain_resume_device_model(gc, domid);
+        rc = libxl__domain_resume_device_model(gc, domid, read_savefile);
         if (rc) {
             LOG(ERROR, "failed to resume device model for domain %u:%d",
                 domid, rc);
@@ -504,7 +505,7 @@ int libxl_domain_resume(libxl_ctx *ctx, uint32_t domid, int suspend_cancel,
                         const libxl_asyncop_how *ao_how)
 {
     AO_CREATE(ctx, domid, ao_how);
-    int rc = libxl__domain_resume(gc, domid, suspend_cancel);
+    int rc = libxl__domain_resume(gc, domid, suspend_cancel, 0);
     libxl__ao_complete(egc, ao, rc);
     return AO_INPROGRESS;
 }
@@ -782,6 +783,10 @@ out:
     return ptr;
 }
 
+static void libxl__remus_setup_done(libxl__egc *egc,
+                                    libxl__remus_devices_state *rds, int rc);
+static void libxl__remus_setup_failed(libxl__egc *egc,
+                                      libxl__remus_devices_state *rds, int rc);
 static void remus_failover_cb(libxl__egc *egc,
                               libxl__domain_suspend_state *dss, int rc);
 
@@ -800,6 +805,22 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
         goto out;
     }
 
+    libxl_defbool_setdefault(&info->unsafe, false);
+    libxl_defbool_setdefault(&info->blackhole, false);
+    libxl_defbool_setdefault(&info->compression, true);
+    libxl_defbool_setdefault(&info->netbuf, true);
+    libxl_defbool_setdefault(&info->diskbuf, true);
+
+    if (!libxl_defbool_val(info->unsafe) &&
+        (libxl_defbool_val(info->blackhole) ||
+         !libxl_defbool_val(info->netbuf) ||
+         !libxl_defbool_val(info->diskbuf))) {
+        LOG(ERROR, "Unsafe mode must be enabled to replicate to /dev/null,"
+                   "disable network buffering and disk replication");
+        goto out;
+    }
+
+
     GCNEW(dss);
     dss->ao = ao;
     dss->callback = remus_failover_cb;
@@ -813,14 +834,61 @@ int libxl_domain_remus_start(libxl_ctx *ctx, libxl_domain_remus_info *info,
 
     assert(info);
 
-    /* TBD: Remus setup - i.e. attach qdisc, enable disk buffering, etc */
+    /* Convenience aliases */
+    libxl__remus_devices_state *const rds = &dss->rds;
+
+    if (libxl_defbool_val(info->netbuf)) {
+        if (!libxl__netbuffer_enabled(gc)) {
+            LOG(ERROR, "Remus: No support for network buffering");
+            goto out;
+        }
+        rds->device_kind_flags |= (1 << LIBXL__DEVICE_KIND_REMUS_NIC);
+    }
+
+    if (libxl_defbool_val(info->diskbuf))
+        rds->device_kind_flags |= (1 << LIBXL__DEVICE_KIND_REMUS_DISK);
+
+    rds->ao = ao;
+    rds->egc = egc;
+    rds->domid = domid;
+    rds->callback = libxl__remus_setup_done;
 
     /* Point of no return */
-    libxl__domain_suspend(egc, dss);
+    libxl__remus_devices_setup(egc, rds);
     return AO_INPROGRESS;
 
  out:
     return AO_ABORT(rc);
+}
+
+static void libxl__remus_setup_done(libxl__egc *egc,
+                                    libxl__remus_devices_state *rds, int rc)
+{
+    libxl__domain_suspend_state *dss = CONTAINER_OF(rds, *dss, rds);
+    STATE_AO_GC(dss->ao);
+
+    if (!rc) {
+        libxl__domain_suspend(egc, dss);
+        return;
+    }
+
+    LOG(ERROR, "Remus: failed to setup device for guest with domid %u, rc %d",
+        dss->domid, rc);
+    rds->callback = libxl__remus_setup_failed;
+    libxl__remus_devices_teardown(egc, rds);
+}
+
+static void libxl__remus_setup_failed(libxl__egc *egc,
+                                      libxl__remus_devices_state *rds, int rc)
+{
+    libxl__domain_suspend_state *dss = CONTAINER_OF(rds, *dss, rds);
+    STATE_AO_GC(dss->ao);
+
+    if (rc)
+        LOG(ERROR, "Remus: failed to teardown device after setup failed"
+            " for guest with domid %u, rc %d", dss->domid, rc);
+
+    dss->callback(egc, dss, rc);
 }
 
 static void remus_failover_cb(libxl__egc *egc,
@@ -831,10 +899,6 @@ static void remus_failover_cb(libxl__egc *egc,
      * With Remus, if we reach this point, it means either
      * backup died or some network error occurred preventing us
      * from sending checkpoints.
-     */
-
-    /* TBD: Remus cleanup - i.e. detach qdisc, release other
-     * resources.
      */
     libxl__ao_complete(egc, ao, rc);
 }
@@ -912,11 +976,8 @@ out:
     return AO_INPROGRESS;
 }
 
-int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
+int libxl__domain_unpause(libxl__gc *gc, uint32_t domid)
 {
-    GC_INIT(ctx);
-    char *path;
-    char *state;
     int ret, rc = 0;
 
     libxl_domain_type type = libxl__domain_type(gc, domid);
@@ -926,20 +987,29 @@ int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
     }
 
     if (type == LIBXL_DOMAIN_TYPE_HVM) {
-        path = libxl__sprintf(gc, "/local/domain/0/device-model/%d/state", domid);
-        state = libxl__xs_read(gc, XBT_NULL, path);
-        if (state != NULL && !strcmp(state, "paused")) {
-            libxl__qemu_traditional_cmd(gc, domid, "continue");
-            libxl__wait_for_device_model_deprecated(gc, domid, "running",
-                                         NULL, NULL, NULL);
+        rc = libxl__domain_unpause_device_model(gc, domid);
+        if (rc < 0) {
+            LOG(ERROR, "failed to unpause device model for domain %u:%d",
+                domid, rc);
+            goto out;
         }
     }
-    ret = xc_domain_unpause(ctx->xch, domid);
-    if (ret<0) {
-        LIBXL__LOG_ERRNO(ctx, LIBXL__LOG_ERROR, "unpausing domain %d", domid);
+
+    ret = xc_domain_unpause(CTX->xch, domid);
+    if (ret < 0) {
+        LOGE(ERROR, "unpausing domain %d", domid);
         rc = ERROR_FAIL;
     }
- out:
+
+out:
+    return rc;
+}
+
+int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
+{
+    GC_INIT(ctx);
+    int rc = libxl__domain_unpause(gc, domid);
+
     GC_FREE;
     return rc;
 }

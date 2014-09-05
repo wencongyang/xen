@@ -990,12 +990,17 @@ _hidden int libxl__domain_rename(libxl__gc *gc, uint32_t domid,
 
 _hidden int libxl__toolstack_restore(uint32_t domid, const uint8_t *buf,
                                      uint32_t size, void *data);
-_hidden int libxl__domain_resume_device_model(libxl__gc *gc, uint32_t domid);
+_hidden int libxl__domain_resume_device_model(libxl__gc *gc,
+                                              uint32_t domid,
+                                              int read_savefile);
+_hidden int libxl__domain_unpause_device_model(libxl__gc *gc,
+                                               uint32_t domid);
 
 _hidden void libxl__userdata_destroyall(libxl__gc *gc, uint32_t domid);
 
 _hidden int libxl__domain_resume(libxl__gc *gc, uint32_t domid,
-                                 int suspend_cancel);
+                                 int suspend_cancel, int read_savefile);
+_hidden int libxl__domain_unpause(libxl__gc *gc, uint32_t domid);
 
 /* returns 0 or 1, or a libxl error code */
 _hidden int libxl__domain_pvcontrol_available(libxl__gc *gc, uint32_t domid);
@@ -1585,6 +1590,8 @@ _hidden int libxl__qmp_stop(libxl__gc *gc, int domid);
 _hidden int libxl__qmp_resume(libxl__gc *gc, int domid);
 /* Save current QEMU state into fd. */
 _hidden int libxl__qmp_save(libxl__gc *gc, int domid, const char *filename);
+/* Load current QEMU state from fd. */
+_hidden int libxl__qmp_restore(libxl__gc *gc, int domid, const char *filename);
 /* Set dirty bitmap logging status */
 _hidden int libxl__qmp_set_global_dirty_log(libxl__gc *gc, int domid, bool enable);
 _hidden int libxl__qmp_insert_cdrom(libxl__gc *gc, int domid, const libxl_device_disk *disk);
@@ -2090,6 +2097,36 @@ void libxl__async_exec_init(libxl__async_exec_state *aes);
 int libxl__async_exec_start(libxl__gc *gc, libxl__async_exec_state *aes);
 bool libxl__async_exec_inuse(const libxl__async_exec_state *aes);
 
+/*----- datareader: read data from one fd to buffer -----*/
+
+typedef struct libxl__datareader_state libxl__datareader_state;
+
+/*
+ * real_size>=1 means all data was read
+ * real_size==0 means failure happened when reading, errnoval is valid, logged
+ * real_size==-1 means some other internal failure, errnoval not valid, logged
+ * In all cases reader is killed before calling this callback
+ */
+typedef void libxl__datareader_callback(libxl__egc *egc,
+     libxl__datareader_state *drs, ssize_t real_size, int errnoval);
+
+struct libxl__datareader_state {
+    /* caller must fill these in, and they must all remain valid */
+    libxl__ao *ao;
+    int readfd;
+    ssize_t readsize;
+    /* for error msgs */
+    const char *readwhat;
+    libxl__datareader_callback *callback;
+    /* It must contain enough space to store readsize bytes */
+    void *buf;
+    /* remaining fields are private to datareader */
+    libxl__ev_fd toread;
+    ssize_t used;
+};
+
+_hidden int libxl__datareader_start(libxl__datareader_state *drs);
+
 /*----- device addition/removal -----*/
 
 typedef struct libxl__ao_device libxl__ao_device;
@@ -2133,6 +2170,8 @@ struct libxl__ao_device {
     int num_exec;
     /* for calling hotplug scripts */
     libxl__async_exec_state aes;
+    /* for asynchronous execution of synchronous-only syscalls etc. */
+    libxl__ev_child child;
 };
 
 /*
@@ -2153,9 +2192,17 @@ struct libxl__ao_device {
 /* Starts preparing to add/remove a bunch of devices. */
 _hidden void libxl__multidev_begin(libxl__ao *ao, libxl__multidev*);
 
-/* Prepares to add/remove one of many devices.  Returns a libxl__ao_device
- * which has had libxl__prepare_ao_device called, and which has also
- * had ->callback set.  The user should not mess with aodev->callback. */
+/* Prepares to add/remove one of many devices.
+ * Calls libxl__prepare_ao_device on libxl__ao_device argument provided and
+ * also sets the ->callback. The user should not mess with aodev->callback.
+ */
+_hidden void libxl__multidev_prepare_with_aodev(libxl__multidev*,
+                                                libxl__ao_device*);
+
+/* A wrapper function around libxl__multidev_prepare_with_aodev.
+ * Allocates a libxl__ao_device and prepares it for addition/removal.
+ * Returns the newly allocated libxl__ao_dev.
+ */
 _hidden libxl__ao_device *libxl__multidev_prepare(libxl__multidev*);
 
 /* Notifies the multidev machinery that we have now finished preparing
@@ -2475,23 +2522,229 @@ typedef struct libxl__save_helper_state {
                       * marshalling and xc callback functions */
 } libxl__save_helper_state;
 
+/*----- remus device related state structure -----*/
+/*
+ * The abstract Remus device layer exposes a common
+ * set of API to [external] libxl for manipulating devices attached to
+ * a guest protected by Remus. The device layer also exposes a set of
+ * [internal] interfaces that every device type must implement.
+ *
+ * The following API are exposed to libxl:
+ *
+ * One-time configuration operations:
+ *  +libxl__remus_devices_setup
+ *    > Enable output buffering for NICs, setup disk replication, etc.
+ *  +libxl__remus_devices_teardown
+ *    > Disable output buffering and disk replication; teardown any
+ *       associated external setups like qdiscs for NICs.
+ *
+ * Operations executed every checkpoint (in order of invocation):
+ *  +libxl__remus_devices_postsuspend
+ *  +libxl__remus_devices_preresume
+ *  +libxl__remus_devices_commit
+ *
+ * Each device type needs to implement the interfaces specified in
+ * the libxl__remus_device_instance_ops if it wishes to support Remus.
+ *
+ * The high-level control flow through the Remus device layer is shown below:
+ *
+ * xl remus
+ *  |->  libxl_domain_remus_start
+ *    |-> libxl__remus_devices_setup
+ *      |-> Per-checkpoint libxl__remus_devices_[postsuspend,preresume,commit]
+ *        ...
+ *        |-> On backup failure, network error or other internal errors:
+ *            libxl__remus_devices_teardown
+ */
+
+typedef struct libxl__remus_device libxl__remus_device;
+typedef struct libxl__remus_devices_state libxl__remus_devices_state;
+typedef struct libxl__remus_device_instance_ops libxl__remus_device_instance_ops;
+
+/*
+ * Interfaces to be implemented by every device subkind that wishes to
+ * support Remus. Functions must be implemented unless otherwise
+ * stated. Many of these functions are asynchronous. They call
+ * dev->aodev.callback when done.  The actual implementations may be
+ * synchronous and call dev->aodev.callback directly (as the last
+ * thing they do).
+ */
+struct libxl__remus_device_instance_ops {
+    /* the device kind this ops belongs to... */
+    libxl__device_kind kind;
+
+    /*
+     * Checkpoint operations. May be NULL, meaning the op is not
+     * implemented and the caller should treat them as a no-op (and do
+     * nothing when checkpointing).
+     * Asynchronous.
+     */
+
+    void (*postsuspend)(libxl__remus_device *dev);
+    void (*preresume)(libxl__remus_device *dev);
+    void (*commit)(libxl__remus_device *dev);
+
+    /*
+     * setup() and teardown() are refer to the actual remus device.
+     * Asynchronous.
+     * teardown is called even if setup fails.
+     */
+    /*
+     * setup() should first determines whether the subkind matches the specific
+     * device. If matched, the device will then be managed with this set of
+     * subkind operations.
+     * Yields 0 if the device successfully set up.
+     * REMUS_DEVOPS_DOES_NOT_MATCH if the ops does not match the device.
+     * any other rc indicates failure.
+     */
+    void (*setup)(libxl__remus_device *dev);
+    void (*teardown)(libxl__remus_device *dev);
+};
+
+int init_subkind_nic(libxl__remus_devices_state *rds);
+void cleanup_subkind_nic(libxl__remus_devices_state *rds);
+int init_subkind_drbd_disk(libxl__remus_devices_state *rds);
+void cleanup_subkind_drbd_disk(libxl__remus_devices_state *rds);
+
+typedef void libxl__remus_callback(libxl__egc *,
+                                   libxl__remus_devices_state *, int rc);
+
+/*
+ * State associated with a remus invocation, including parameters
+ * passed to the remus abstract device layer by the remus
+ * save/restore machinery.
+ */
+struct libxl__remus_devices_state {
+    /*---- must be set by caller of libxl__remus_device_(setup|teardown) ----*/
+
+    libxl__ao *ao;
+    libxl__egc *egc;
+    uint32_t domid;
+    libxl__remus_callback *callback;
+    int device_kind_flags;
+
+    /*----- private for abstract layer only -----*/
+
+    int num_devices;
+    /*
+     * this array is allocated before setup the remus devices by the
+     * remus abstract layer.
+     * devs may be NULL, means there's no remus devices that has been set up.
+     * the size of this array is 'num_devices', which is the total number
+     * of libxl nic devices and disk devices(num_nics + num_disks).
+     */
+    libxl__remus_device **devs;
+
+    libxl_device_nic *nics;
+    int num_nics;
+    libxl_device_disk *disks;
+    int num_disks;
+
+    libxl__multidev multidev;
+
+    /*----- private for concrete (device-specific) layer only -----*/
+
+    /* private for nic device subkind ops */
+    char *netbufscript;
+    struct nl_sock *nlsock;
+    struct nl_cache *qdisc_cache;
+
+    /* private for drbd disk subkind ops */
+    char *drbd_probe_script;
+};
+
+/*
+ * Information about a single device being handled by remus.
+ * Allocated by the remus abstract layer.
+ */
+struct libxl__remus_device {
+    /*----- shared between abstract and concrete layers -----*/
+    /*
+     * if this is true, that means the subkind ops match the device
+     */
+    bool matched;
+
+    /*----- set by remus device abstruct layer -----*/
+    /* libxl__device_* which this remus device related to */
+    const void *backend_dev;
+    libxl__device_kind kind;
+    libxl__remus_devices_state *rds;
+    libxl__ao_device aodev;
+
+    /*----- private for abstract layer only -----*/
+
+    /*
+     * Control and state variables for the asynchronous callback
+     * based loops which iterate over device subkinds, and over
+     * individual devices.
+     */
+    int ops_index;
+    const libxl__remus_device_instance_ops *ops;
+
+    /*----- private for concrete (device-specific) layer -----*/
+
+    /* concrete device's private data */
+    void *concrete_data;
+};
+
+/* the following 5 APIs are async ops, call rds->callback when done */
+_hidden void libxl__remus_devices_setup(libxl__egc *egc,
+                                        libxl__remus_devices_state *rds);
+_hidden void libxl__remus_devices_teardown(libxl__egc *egc,
+                                           libxl__remus_devices_state *rds);
+_hidden void libxl__remus_devices_postsuspend(libxl__egc *egc,
+                                              libxl__remus_devices_state *rds);
+_hidden void libxl__remus_devices_preresume(libxl__egc *egc,
+                                            libxl__remus_devices_state *rds);
+_hidden void libxl__remus_devices_commit(libxl__egc *egc,
+                                         libxl__remus_devices_state *rds);
+_hidden int libxl__netbuffer_enabled(libxl__gc *gc);
 
 /*----- Domain suspend (save) state structure -----*/
 
 typedef struct libxl__domain_suspend_state libxl__domain_suspend_state;
+typedef struct libxl__domain_suspend_state2 libxl__domain_suspend_state2;
 
 typedef void libxl__domain_suspend_cb(libxl__egc*,
                                       libxl__domain_suspend_state*, int rc);
 typedef void libxl__save_device_model_cb(libxl__egc*,
                                          libxl__domain_suspend_state*, int rc);
 
-typedef struct libxl__logdirty_switch {
+typedef struct libxl__logdirty_switch libxl__logdirty_switch;
+struct libxl__logdirty_switch {
+    /* set by caller of libxl__domain_common_switch_qemu_logdirty */
+    libxl__ao *ao;
+    void (*callback)(libxl__egc *egc, libxl__logdirty_switch *lds, int rc);
+
     const char *cmd;
     const char *cmd_path;
     const char *ret_path;
     libxl__ev_xswatch watch;
     libxl__ev_time timeout;
-} libxl__logdirty_switch;
+};
+
+/*
+ * libxl__domain_suspend_state is for saving guest, not
+ * for suspending guest. We need to an independent API
+ * to suspend guest only.
+ */
+struct libxl__domain_suspend_state2 {
+    /* set by caller of libxl__domain_suspend2 */
+    libxl__ao *ao;
+
+    uint32_t domid;
+    libxl__ev_evtchn guest_evtchn;;
+    int guest_evtchn_lockfd;
+    int hvm;
+    const char *dm_savefile;
+    void (*callback_common_done)(libxl__egc*,
+                                 libxl__domain_suspend_state2*, int ok);
+    int save_dm;
+    int guest_responded;
+    libxl__xswait_state pvcontrol;
+    libxl__ev_xswatch guest_watch;
+    libxl__ev_time guest_timeout;
+};
 
 struct libxl__domain_suspend_state {
     /* set by caller of libxl__domain_suspend */
@@ -2505,20 +2758,14 @@ struct libxl__domain_suspend_state {
     int debug;
     const libxl_domain_remus_info *remus;
     /* private */
-    libxl__ev_evtchn guest_evtchn;
-    int guest_evtchn_lockfd;
+    libxl__domain_suspend_state2 dss2;
     int hvm;
     int xcflags;
-    int guest_responded;
-    libxl__xswait_state pvcontrol;
-    libxl__ev_xswatch guest_watch;
-    libxl__ev_time guest_timeout;
-    const char *dm_savefile;
+    libxl__remus_devices_state rds;
+    libxl__ev_time checkpoint_timeout; /* used for Remus checkpoint */
     int interval; /* checkpoint interval (for Remus) */
     libxl__save_helper_state shs;
     libxl__logdirty_switch logdirty;
-    void (*callback_common_done)(libxl__egc*,
-                                 struct libxl__domain_suspend_state*, int ok);
     /* private for libxl__domain_save_device_model */
     libxl__save_device_model_cb *save_dm_callback;
     libxl__datacopier_state save_dm_datacopier;
@@ -2790,6 +3037,9 @@ struct libxl__domain_create_state {
 
 /*----- Domain suspend (save) functions -----*/
 
+/* calls dss2->callback_common_done when done */
+_hidden void libxl__domain_suspend2(libxl__egc *egc,
+                                    libxl__domain_suspend_state2 *dss2);
 /* calls dss->callback when done */
 _hidden void libxl__domain_suspend(libxl__egc *egc,
                                    libxl__domain_suspend_state *dss);
@@ -2813,6 +3063,9 @@ void libxl__xc_domain_saverestore_async_callback_done(libxl__egc *egc,
 
 _hidden void libxl__domain_suspend_common_switch_qemu_logdirty
                                (int domid, unsigned int enable, void *data);
+_hidden void libxl__domain_common_switch_qemu_logdirty
+                                (int domid, unsigned int enable,
+                                 libxl__logdirty_switch *lds, libxl__egc *egc);
 _hidden int libxl__toolstack_save(uint32_t domid, uint8_t **buf,
         uint32_t *len, void *data);
 
@@ -2829,7 +3082,7 @@ _hidden void libxl__xc_domain_restore_done(libxl__egc *egc, void *dcs_void,
 
 /* Each time the dm needs to be saved, we must call suspend and then save */
 _hidden int libxl__domain_suspend_device_model(libxl__gc *gc,
-                                           libxl__domain_suspend_state *dss);
+                                           libxl__domain_suspend_state2 *dss2);
 _hidden void libxl__domain_save_device_model(libxl__egc *egc,
                                      libxl__domain_suspend_state *dss,
                                      libxl__save_device_model_cb *callback);

@@ -309,9 +309,11 @@ int libxl__datacopier_start(libxl__datacopier_state *dc)
 
     libxl__datacopier_init(dc);
 
-    rc = libxl__ev_fd_register(gc, &dc->toread, datacopier_readable,
-                               dc->readfd, POLLIN);
-    if (rc) goto out;
+    if (dc->readfd >= 0) {
+        rc = libxl__ev_fd_register(gc, &dc->toread, datacopier_readable,
+                                   dc->readfd, POLLIN);
+        if (rc) goto out;
+    }
 
     rc = libxl__ev_fd_register(gc, &dc->towrite, datacopier_writable,
                                dc->writefd, POLLOUT);
@@ -539,4 +541,77 @@ bool libxl__async_exec_inuse(const libxl__async_exec_state *aes)
     bool child_inuse = libxl__ev_child_inuse(&aes->child);
     assert(time_inuse == child_inuse);
     return child_inuse;
+}
+
+
+/*----- data reader -----*/
+
+static void libxl__datareader_init(libxl__datareader_state *drs)
+{
+    assert(drs->ao);
+    libxl__ev_fd_init(&drs->toread);
+    drs->used = 0;
+}
+
+static void libxl__datareader_kill(libxl__datareader_state *drs)
+{
+    STATE_AO_GC(drs->ao);
+
+    libxl__ev_fd_deregister(gc, &drs->toread);
+}
+
+static void datareader_callback(libxl__egc *egc, libxl__datareader_state *drs,
+                                ssize_t size, int errnoval)
+{
+    libxl__datareader_kill(drs);
+    drs->callback(egc, drs, size, errnoval);
+}
+
+static void datareader_readable(libxl__egc *egc, libxl__ev_fd *ev,
+                                int fd, short events, short revents)
+{
+    libxl__datareader_state *drs = CONTAINER_OF(ev, *drs, toread);
+    STATE_AO_GC(drs->ao);
+    int r;
+
+    if (revents & ~POLLIN) {
+        LOG(ERROR, "unexpected poll event 0x%x (should be POLLIN) on %s",
+            revents, drs->readwhat);
+        datareader_callback(egc, drs, -1, 0);
+        return;
+    }
+
+    assert(revents & POLLIN);
+    while (1) {
+        r = read(ev->fd, drs->buf + drs->used, drs->readsize - drs->used);
+        if (r < 0) {
+            if (errno == EINTR)
+                continue;
+            if (errno == EWOULDBLOCK)
+                break;
+            LOGE(ERROR, "error reading %s",
+                 drs->readwhat);
+            datareader_callback(egc, drs, 0, errno);
+            return;
+        }
+        if (r == 0) {
+            datareader_callback(egc, drs, drs->used, 0);
+            break;
+        }
+
+        drs->used += r;
+    }
+}
+
+int libxl__datareader_start(libxl__datareader_state *drs)
+{
+    int rc;
+    STATE_AO_GC(drs->ao);
+
+    libxl__datareader_init(drs);
+
+    rc = libxl__ev_fd_register(gc, &drs->toread, datareader_readable,
+                               drs->readfd, POLLIN);
+
+    return rc;
 }
