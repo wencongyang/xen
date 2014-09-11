@@ -2340,7 +2340,7 @@ static void device_disk_add(libxl__egc *egc, uint32_t domid,
                 }
                 flexarray_append(back, "tapdisk-params");
                 flexarray_append(back, libxl__sprintf(gc, "%s:%s",
-                    libxl__device_disk_string_of_format(disk->format),
+                    libxl_disk_format_to_string(disk->format),
                     disk->pdev_path));
 
                 /* tap backends with scripts are rejected by
@@ -2352,7 +2352,8 @@ static void device_disk_add(libxl__egc *egc, uint32_t domid,
             case LIBXL_DISK_BACKEND_QDISK:
                 flexarray_append(back, "params");
                 flexarray_append(back, libxl__sprintf(gc, "%s:%s",
-                              libxl__device_disk_string_of_format(disk->format), disk->pdev_path));
+                              libxl_disk_format_to_string(disk->format),
+                              disk->pdev_path));
                 assert(device->backend_kind == LIBXL__DEVICE_KIND_QDISK);
                 break;
             default:
@@ -2744,7 +2745,7 @@ int libxl_cdrom_insert(libxl_ctx *ctx, uint32_t domid, libxl_device_disk *disk,
     if (disk->format != LIBXL_DISK_FORMAT_EMPTY)
         flexarray_append_pair(insert, "params",
                         GCSPRINTF("%s:%s",
-                            libxl__device_disk_string_of_format(disk->format),
+                            libxl_disk_format_to_string(disk->format),
                             disk->pdev_path));
     else
         flexarray_append_pair(insert, "params", "");

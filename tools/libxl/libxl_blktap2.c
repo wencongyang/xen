@@ -54,8 +54,9 @@ char *libxl__blktap_devpath(libxl__gc *gc,
 int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params)
 {
     char *type, *disk;
-    int err;
+    int err, rc;
     tap_list_t tap;
+    libxl_disk_format format;
 
     type = libxl__strdup(gc, params);
 
@@ -66,6 +67,15 @@ int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params)
     }
 
     *disk++ = '\0';
+
+    /* type may be raw */
+    rc = libxl_disk_format_from_string(type, &format);
+    if (rc < 0) {
+        LOG(ERROR, "invalid disk type %s", type);
+        return ERROR_FAIL;
+    }
+
+    type = libxl__device_disk_string_of_format(format);
 
     err = tap_ctl_find(type, disk, &tap);
     if (err < 0) {
