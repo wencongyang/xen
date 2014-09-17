@@ -321,6 +321,18 @@ static void *linux_privcmd_map_foreign_bulk(xc_interface *xch, xc_osdep_handle h
         }
 
         memcpy(pfn, arr, num * sizeof(*arr));
+        for ( i = 0; i < num; i++ )
+        {
+            /*
+             * IOCTL_PRIVCMD_MMAPBATCH doesn't support the mfn which
+             * error bits are set
+             */
+            if ( pfn[i] & PRIVCMD_MMAPBATCH_MFN_ERROR )
+            {
+                pfn[i] = ~0UL;
+                err[i] = -EINVAL;
+            }
+        }
 
         ioctlx.num = num;
         ioctlx.dom = dom;
@@ -333,6 +345,9 @@ static void *linux_privcmd_map_foreign_bulk(xc_interface *xch, xc_osdep_handle h
 
         for ( i = 0; i < num; ++i )
         {
+            if ( pfn[i] == ~0UL )
+                continue;
+
             switch ( pfn[i] ^ arr[i] )
             {
             case 0:
