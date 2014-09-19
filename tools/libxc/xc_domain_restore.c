@@ -2310,9 +2310,7 @@ int xc_domain_restore(xc_interface *xch, int io_fd, uint32_t dom,
     }
 
     /* These comms pages need to be zeroed at the start of day */
-    if ( xc_clear_domain_page(xch, dom, tailbuf.u.hvm.magicpfns[0]) ||
-         xc_clear_domain_page(xch, dom, tailbuf.u.hvm.magicpfns[1]) ||
-         xc_clear_domain_page(xch, dom, tailbuf.u.hvm.magicpfns[2]) )
+    if ( xc_clear_domain_page(xch, dom, tailbuf.u.hvm.magicpfns[2]) )
     {
         PERROR("error zeroing magic pages");
         goto out;

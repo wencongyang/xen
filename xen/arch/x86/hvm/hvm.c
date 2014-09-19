@@ -393,6 +393,33 @@ bool_t hvm_io_pending(struct vcpu *v)
     return 0;
 }
 
+static void hvm_reinject_pended_io(struct vcpu *v)
+{
+    struct domain *d = v->domain;
+    struct hvm_ioreq_server *s;
+
+    list_for_each_entry ( s,
+                          &d->arch.hvm_domain.ioreq_server.list,
+                          list_entry )
+    {
+        struct hvm_ioreq_vcpu *sv;
+
+        list_for_each_entry ( sv,
+                              &s->ioreq_vcpu_list,
+                              list_entry )
+        {
+            if ( sv->vcpu == v )
+            {
+                evtchn_port_t port = sv->ioreq_evtchn;
+                ioreq_t * p = get_ioreq(s, v);
+
+                if ( p->state == STATE_IOREQ_READY )
+                    notify_via_xen_event_channel(d, port);
+            }
+        }
+    }
+}
+
 static bool_t hvm_wait_for_io(struct hvm_ioreq_vcpu *sv, ioreq_t *p)
 {
     /* NB. Optimised for common case (p->state == STATE_IOREQ_NONE). */
@@ -1977,6 +2004,7 @@ static int hvm_load_cpu_ctxt(struct domain *d, hvm_domain_context_t *h)
     /* Auxiliary processors should be woken immediately. */
     v->is_initialised = 1;
     clear_bit(_VPF_down, &v->pause_flags);
+    hvm_reinject_pended_io(v);
     vcpu_wake(v);
 
     return 0;
