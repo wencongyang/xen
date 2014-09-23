@@ -807,7 +807,7 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
     xc_dominfo_t info;
     DECLARE_DOMCTL;
 
-    int rc, frc, i, j, last_iter = 0, iter = 0;
+    int rc = 1, frc, i, j, last_iter = 0, iter = 0;
     int live  = (flags & XCFLAGS_LIVE);
     int debug = (flags & XCFLAGS_DEBUG);
     int superpages = !!hvm;
@@ -2073,8 +2073,12 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
     goto out_rc;
 
  out:
-    rc = errno;
-    assert(rc);
+    /*
+     * When we come here, some erroe happened. But the errno may be undefined.
+     * For example, the callback suspend() fails, and we cannot get correct
+     * errno, because it may be implemented in libxl.
+     */
+    rc = 1;
  out_rc:
     completed = 1;
 
@@ -2113,30 +2117,34 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
     compressing = (flags & XCFLAGS_CHECKPOINT_COMPRESS);
 
     /* checkpoint_cb can spend arbitrarily long in between rounds */
-    if (!rc && callbacks->checkpoint &&
-        callbacks->checkpoint(callbacks->data) > 0)
+    if ( !rc && callbacks->checkpoint )
     {
-        /* reset stats timer */
-        print_stats(xch, dom, 0, &time_stats, &shadow_stats, 0);
-
-        /* last_iter = 1; */
-        if ( suspend_and_state(callbacks->suspend, callbacks->data, xch,
-                               io_fd, dom, &info) )
+        if ( callbacks->checkpoint(callbacks->data) > 0 )
         {
-            ERROR("Domain appears not to have suspended");
-            goto out;
-        }
-        DPRINTF("SUSPEND shinfo %08lx\n", info.shared_info_frame);
-        print_stats(xch, dom, 0, &time_stats, &shadow_stats, 1);
+            /* reset stats timer */
+            print_stats(xch, dom, 0, &time_stats, &shadow_stats, 0);
 
-        if ( xc_shadow_control(xch, dom,
-                               XEN_DOMCTL_SHADOW_OP_CLEAN, HYPERCALL_BUFFER(to_send),
-                               dinfo->p2m_size, NULL, 0, &shadow_stats) != dinfo->p2m_size )
-        {
-            PERROR("Error flushing shadow PT");
-        }
+            /* last_iter = 1; */
+            if ( suspend_and_state(callbacks->suspend, callbacks->data, xch,
+                                   io_fd, dom, &info) )
+            {
+                ERROR("Domain appears not to have suspended");
+                goto out;
+            }
+            DPRINTF("SUSPEND shinfo %08lx\n", info.shared_info_frame);
+            print_stats(xch, dom, 0, &time_stats, &shadow_stats, 1);
 
-        goto copypages;
+            if ( xc_shadow_control(xch, dom,
+                                   XEN_DOMCTL_SHADOW_OP_CLEAN, HYPERCALL_BUFFER(to_send),
+                                   dinfo->p2m_size, NULL, 0, &shadow_stats) != dinfo->p2m_size )
+            {
+                PERROR("Error flushing shadow PT");
+            }
+
+            goto copypages;
+        }
+        else
+            rc = 1;
     }
 
     if ( tmem_saved != 0 && live )
@@ -2174,11 +2182,10 @@ int xc_domain_save(xc_interface *xch, int io_fd, uint32_t dom, uint32_t max_iter
     free(hvm_buf);
     outbuf_free(&ob_pagebuf);
 
-    errno = rc;
 exit:
-    DPRINTF("Save exit of domid %u with errno=%d\n", dom, errno);
+    DPRINTF("Save exit of domid %u with rc=%d\n", dom, rc);
 
-    return !!errno;
+    return rc;
 }
 
 /*
