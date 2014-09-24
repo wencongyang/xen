@@ -156,6 +156,28 @@ static int xc_map_foreign_batch_single(int fd, uint32_t dom,
     return rc;
 }
 
+/*
+ * If the mfn is valid but is large enough to have the top nibble (the
+ * "error nibble") set then there is no way to do proper error reporting,
+ * because the mfn and the error code will get intermixed
+ */
+static int check_mfn_for_mmapbatch(const xen_pfn_t *arr, int num)
+{
+    int i;
+
+    for ( i = 0; i < num; i++ )
+    {
+        /* the caller indicates that they don't want a mapping at index i */
+        if ( arr[i] == ~0UL )
+            continue;
+
+        if ( arr[i] & PRIVCMD_MMAPBATCH_MFN_ERROR )
+            return 1;
+    }
+
+    return 0;
+}
+
 static void *linux_privcmd_map_foreign_batch(xc_interface *xch, xc_osdep_handle h,
                                              uint32_t dom, int prot,
                                              xen_pfn_t *arr, int num)
@@ -307,6 +329,12 @@ static void *linux_privcmd_map_foreign_bulk(xc_interface *xch, xc_osdep_handle h
         xen_pfn_t *pfn;
         unsigned int pfn_arr_size = ROUNDUP((num * sizeof(*pfn)), XC_PAGE_SHIFT);
 
+        if ( check_mfn_for_mmapbatch(arr, num) )
+        {
+            (void)munmap(addr, (unsigned long)num << XC_PAGE_SHIFT);
+            return NULL;
+        }
+
         if ( pfn_arr_size <= XC_PAGE_SIZE )
             pfn = alloca(num * sizeof(*pfn));
         else
@@ -333,6 +361,12 @@ static void *linux_privcmd_map_foreign_bulk(xc_interface *xch, xc_osdep_handle h
 
         for ( i = 0; i < num; ++i )
         {
+            if ( arr[i] == ~0UL )
+            {
+                err[i] = -EINVAL;
+                continue;
+            }
+
             switch ( pfn[i] ^ arr[i] )
             {
             case 0:
