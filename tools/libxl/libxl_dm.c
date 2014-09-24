@@ -750,7 +750,9 @@ static char ** libxl__build_device_model_args_new(libxl__gc *gc,
 
                 if (disks[i].backend == LIBXL_DISK_BACKEND_TAP)
                     pdev_path = libxl__blktap_devpath(gc, disks[i].pdev_path,
-                                                      disks[i].format);
+                                                      disks[i].format,
+                                                      disks[i].filter,
+                                                      disks[i].filter_params);
                 else
                     pdev_path = disks[i].pdev_path;
 

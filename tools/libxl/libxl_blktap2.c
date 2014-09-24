@@ -25,22 +25,33 @@ int libxl__blktap_enabled(libxl__gc *gc)
 
 char *libxl__blktap_devpath(libxl__gc *gc,
                             const char *disk,
-                            libxl_disk_format format)
+                            libxl_disk_format format,
+                            const char *filter,
+                            const char *filter_params)
 {
-    const char *type;
+    const char *type, *disk_params;
     char *params, *devname = NULL;
     tap_list_t tap;
     int err;
 
     type = libxl__device_disk_string_of_format(format);
-    err = tap_ctl_find(type, disk, &tap);
+    if (!type)
+        return NULL;
+
+    if (filter) {
+        disk_params = libxl__sprintf(gc, "%s|%s:%s", filter_params, type, disk);
+        type = filter;
+    } else {
+        disk_params = disk;
+    }
+    err = tap_ctl_find(type, disk_params, &tap);
     if (err == 0) {
         devname = libxl__sprintf(gc, "/dev/xen/blktap-2/tapdev%d", tap.minor);
         if (devname)
             return devname;
     }
 
-    params = libxl__sprintf(gc, "%s:%s", type, disk);
+    params = libxl__sprintf(gc, "%s:%s", type, disk_params);
     err = tap_ctl_create(params, &devname);
     if (!err) {
         libxl__ptr_add(gc, devname);
@@ -51,7 +62,9 @@ char *libxl__blktap_devpath(libxl__gc *gc,
 }
 
 
-int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params)
+int libxl__device_destroy_tapdisk(libxl__gc *gc,
+                                  const char *params,
+                                  const char *filter_params)
 {
     char *type, *disk;
     int err, rc;
@@ -76,6 +89,21 @@ int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params)
     }
 
     type = libxl__device_disk_string_of_format(format);
+
+    if (filter_params) {
+        char *tmp;
+        char *tmp_type = type, *tmp_disk = disk;
+
+        type = libxl__strdup(gc, filter_params);
+        tmp = strchr(type, ':');
+
+        if (!tmp) {
+            LOG(ERROR, "Unable to parse filter-params %s", filter_params);
+            return ERROR_FAIL;
+        }
+        *tmp++ = '\0';
+        disk = libxl__sprintf(gc, "%s|%s:%s", tmp, tmp_type, tmp_disk);
+    }
 
     err = tap_ctl_find(type, disk, &tap);
     if (err < 0) {
