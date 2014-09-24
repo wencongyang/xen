@@ -196,6 +196,9 @@ static int disk_try_backend(disk_try_backend_args *a,
             goto bad_format;
         }
 
+        if (a->disk->filter) goto bad_filter;
+        if (a->disk->filter_params) goto bad_filter_params;
+
         if (a->disk->backend_domid != LIBXL_TOOLSTACK_DOMID) {
             LOG(DEBUG, "Disk vdev=%s, is using a storage driver domain, "
                        "skipping physical device check", a->disk->vdev);
@@ -232,10 +235,25 @@ static int disk_try_backend(disk_try_backend_args *a,
               a->disk->format == LIBXL_DISK_FORMAT_VHD)) {
             goto bad_format;
         }
+
+        if (a->disk->filter && !a->disk->filter_params) {
+            LOG(DEBUG, "Disk vdev=%s, backend tap unsuitable due to missing "
+                "filter_params=...", a->disk->vdev);
+            return 0;
+        }
+
+        if (!a->disk->filter && a->disk->filter_params) {
+            LOG(DEBUG, "Disk vdev=%s, backend tap unsuitable due to missing "
+                "filter=...", a->disk->vdev);
+            return 0;
+        }
+
         return backend;
 
     case LIBXL_DISK_BACKEND_QDISK:
         if (a->disk->script) goto bad_script;
+        if (a->disk->filter) goto bad_filter;
+        if (a->disk->filter_params) goto bad_filter_params;
         return backend;
 
     default:
@@ -254,6 +272,16 @@ static int disk_try_backend(disk_try_backend_args *a,
 
  bad_script:
     LOG(DEBUG, "Disk vdev=%s, backend %s not compatible with script=...",
+        a->disk->vdev, libxl_disk_backend_to_string(backend));
+    return 0;
+
+ bad_filter:
+    LOG(DEBUG, "Disk vdev=%s, backend %s not compatible with filter=...",
+        a->disk->vdev, libxl_disk_backend_to_string(backend));
+    return 0;
+
+ bad_filter_params:
+    LOG(DEBUG, "Disk vdev=%s, backend %s not compatible with filter-params=...",
         a->disk->vdev, libxl_disk_backend_to_string(backend));
     return 0;
 }
@@ -572,6 +600,8 @@ int libxl__device_destroy(libxl__gc *gc, libxl__device *dev)
     const char *fe_path = libxl__device_frontend_path(gc, dev);
     const char *tapdisk_path = GCSPRINTF("%s/%s", be_path, "tapdisk-params");
     const char *tapdisk_params;
+    const char *filter_path = GCSPRINTF("%s/%s", be_path, "filter-params");
+    const char *filter_params;
     xs_transaction_t t = 0;
     int rc;
     uint32_t domid;
@@ -585,6 +615,9 @@ int libxl__device_destroy(libxl__gc *gc, libxl__device *dev)
 
         /* May not exist if this is not a tap device */
         rc = libxl__xs_read_checked(gc, t, tapdisk_path, &tapdisk_params);
+        if (rc) goto out;
+
+        rc = libxl__xs_read_checked(gc, t, filter_path, &filter_params);
         if (rc) goto out;
 
         if (domid == LIBXL_TOOLSTACK_DOMID) {
@@ -608,7 +641,7 @@ int libxl__device_destroy(libxl__gc *gc, libxl__device *dev)
     }
 
     if (tapdisk_params)
-        rc = libxl__device_destroy_tapdisk(gc, tapdisk_params);
+        rc = libxl__device_destroy_tapdisk(gc, tapdisk_params, filter_params);
 
 out:
     libxl__xs_transaction_abort(gc, &t);

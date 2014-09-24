@@ -23,12 +23,16 @@ int libxl__blktap_enabled(libxl__gc *gc)
 
 char *libxl__blktap_devpath(libxl__gc *gc,
                             const char *disk,
-                            libxl_disk_format format)
+                            libxl_disk_format format,
+                            const char *filter,
+                            const char *filter_params)
 {
     return NULL;
 }
 
-int libxl__device_destroy_tapdisk(libxl__gc *gc, const char *params)
+int libxl__device_destroy_tapdisk(libxl__gc *gc,
+                                  const char *params,
+                                  const char *filter_params)
 {
     return 0;
 }

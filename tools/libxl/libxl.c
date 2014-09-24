@@ -2403,7 +2403,8 @@ static void device_disk_add(libxl__egc *egc, uint32_t domid,
             case LIBXL_DISK_BACKEND_TAP:
                 if (dev == NULL) {
                     dev = libxl__blktap_devpath(gc, disk->pdev_path,
-                                                disk->format);
+                                                disk->format, disk->filter,
+                                                disk->filter_params);
                     if (!dev) {
                         LOG(ERROR, "failed to get blktap devpath for %p\n",
                             disk->pdev_path);
@@ -2415,6 +2416,11 @@ static void device_disk_add(libxl__egc *egc, uint32_t domid,
                 flexarray_append(back, libxl__sprintf(gc, "%s:%s",
                     libxl_disk_format_to_string(disk->format),
                     disk->pdev_path));
+                if (disk->filter) {
+                    flexarray_append(back, "filter-params");
+                    flexarray_append(back, libxl__sprintf(gc, "%s:%s",
+                        disk->filter, disk->filter_params));
+                }
 
                 /* tap backends with scripts are rejected by
                  * libxl__device_disk_set_backend */
@@ -2616,6 +2622,20 @@ static int libxl__device_disk_from_xs_be(libxl__gc *gc,
          * phy in type(see device_disk_add())
          */
         disk->backend = LIBXL_DISK_BACKEND_TAP;
+
+        rc = read_params(gc, GCSPRINTF("%s/filter-params", be_path),
+                         &tmp, &disk->filter_params);
+        if (rc)
+            goto cleanup;
+        if (!tmp) {
+            LOG(ERROR, "corrupted filter-params: %s", disk->filter_params);
+            goto cleanup;
+        }
+        disk->filter = strdup(tmp);
+        if (!disk->filter) {
+            LOGE(ERROR, "no memory to store filter");
+            goto cleanup;
+        }
     } else {
         /* "params" may not be present; but everything else must be. */
         rc = read_params(gc, GCSPRINTF("%s/params", be_path),
@@ -3068,7 +3088,8 @@ void libxl__device_disk_local_initiate_attach(libxl__egc *egc,
                 break;
             case LIBXL_DISK_FORMAT_VHD:
                 dev = libxl__blktap_devpath(gc, disk->pdev_path,
-                                            disk->format);
+                                            disk->format, disk->filter,
+                                            disk->filter_params);
                 break;
             case LIBXL_DISK_FORMAT_QCOW:
             case LIBXL_DISK_FORMAT_QCOW2:
