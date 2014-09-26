@@ -186,7 +186,6 @@ typedef struct tdremus_wire {
 
 #define TDREMUS_READ "rreq"
 #define TDREMUS_WRITE "wreq"
-#define TDREMUS_SUBMIT "sreq"
 #define TDREMUS_COMMIT "creq"
 #define TDREMUS_DONE "done"
 #define TDREMUS_FAIL "fail"
@@ -750,42 +749,6 @@ static void close_server_fd(struct tdremus_state *s)
 
 /* primary functions */
 static void remus_client_event(event_id_t, char mode, void *private);
-static void remus_connect_event(event_id_t id, char mode, void *private);
-static void remus_retry_connect_event(event_id_t id, char mode, void *private);
-
-static int primary_do_connect(struct tdremus_state *state)
-{
-	event_id_t id;
-	int fd;
-	int rc;
-	int flags;
-
-	RPRINTF("client connecting to %s:%d...\n", inet_ntoa(state->sa.sin_addr), ntohs(state->sa.sin_port));
-
-	if ((fd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-		RPRINTF("could not create client socket: %d\n", errno);
-		return -1;
-	}
-
-	/* make socket nonblocking */
-	if ((flags = fcntl(fd, F_GETFL, 0)) == -1)
-		flags = 0;
-	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
-		return -1;
-
-	/* once we have created the socket and populated the address, we can now start
-	 * our non-blocking connect. rather than duplicating code we trigger a timeout
-	 * on the socket fd, which calls out nonblocking connect code
-	 */
-	if((id = tapdisk_server_register_event(SCHEDULER_POLL_TIMEOUT, fd, 0, remus_retry_connect_event, state)) < 0) {
-		RPRINTF("error registering timeout client connection event handler: %s\n", strerror(id));
-		/* TODO: we leak a fd here */
-		return -1;
-	}
-	state->stream_fd.fd = fd;
-	state->stream_fd.id = id;
-	return 0;
-}
 
 static int primary_blocking_connect(struct tdremus_state *state)
 {
@@ -938,100 +901,6 @@ static int primary_start(td_driver_t *driver)
 
 	return 0;
 }
-
-/* timeout callback */
-static void remus_retry_connect_event(event_id_t id, char mode, void *private)
-{
-	struct tdremus_state *s = (struct tdremus_state *)private;
-
-	/* do a non-blocking connect */
-	if (connect(s->stream_fd.fd, (struct sockaddr *)&s->sa, sizeof(s->sa))
-	    && errno != EINPROGRESS)
-	{
-		if(errno == ECONNREFUSED || errno == ENETUNREACH || errno == EAGAIN || errno == ECONNABORTED)
-		{
-			/* try again in a second */
-			tapdisk_server_unregister_event(s->stream_fd.id);
-			if((id = tapdisk_server_register_event(SCHEDULER_POLL_TIMEOUT, s->stream_fd.fd, REMUS_CONNRETRY_TIMEOUT, remus_retry_connect_event, s)) < 0) {
-				RPRINTF("error registering timeout client connection event handler: %s\n", strerror(id));
-				return;
-			}
-			s->stream_fd.id = id;
-		}
-		else
-		{
-			/* not recoverable */
-			RPRINTF("error connection to server %s\n", strerror(errno));
-			return;
-		}
-	}
-	else
-	{
-		/* the connect returned EINPROGRESS (nonblocking connect) we must wait for the fd to be writeable to determine if the connect worked */
-
-		tapdisk_server_unregister_event(s->stream_fd.id);
-		if((id = tapdisk_server_register_event(SCHEDULER_POLL_WRITE_FD, s->stream_fd.fd, 0, remus_connect_event, s)) < 0) {
-			RPRINTF("error registering client connection event handler: %s\n", strerror(id));
-			return;
-		}
-		s->stream_fd.id = id;
-	}
-}
-
-/* callback when nonblocking connect() is finished */
-/* called only by primary in unprotected state */
-static void remus_connect_event(event_id_t id, char mode, void *private)
-{
-	int socket_errno;
-	socklen_t socket_errno_size;
-	struct tdremus_state *s = (struct tdremus_state *)private;
-
-	/* check to se if the connect succeeded */
-	socket_errno_size = sizeof(socket_errno);
-	if (getsockopt(s->stream_fd.fd, SOL_SOCKET, SO_ERROR, &socket_errno, &socket_errno_size)) {
-		RPRINTF("error getting socket errno\n");
-		return;
-	}
-
-	RPRINTF("socket connect returned %d\n", socket_errno);
-
-	if(socket_errno)
-	{
-		/* the connect did not succeed */
-
-		if(socket_errno == ECONNREFUSED || socket_errno == ENETUNREACH || socket_errno == ETIMEDOUT
-		   || socket_errno == ECONNABORTED || socket_errno == EAGAIN)
-		{
-			/* we can probably assume that the backup is down. just try again later */
-			tapdisk_server_unregister_event(s->stream_fd.id);
-			if((id = tapdisk_server_register_event(SCHEDULER_POLL_TIMEOUT, s->stream_fd.fd, REMUS_CONNRETRY_TIMEOUT, remus_retry_connect_event, s)) < 0) {
-				RPRINTF("error registering timeout client connection event handler: %s\n", strerror(id));
-				return;
-			}
-			s->stream_fd.id = id;
-		}
-		else
-		{
-			RPRINTF("socket connect returned %d, giving up\n", socket_errno);
-		}
-	}
-	else
-	{
-		/* the connect succeeded */
-
-		/* unregister this function and register a new event handler */
-		tapdisk_server_unregister_event(s->stream_fd.id);
-		if((id = tapdisk_server_register_event(SCHEDULER_POLL_READ_FD, s->stream_fd.fd, 0, remus_client_event, s)) < 0) {
-			RPRINTF("error registering client event handler: %s\n", strerror(id));
-			return;
-		}
-		s->stream_fd.id = id;
-
-		/* switch from unprotected to protected client */
-		switch_mode(s->tdremus_driver, mode_primary);
-	}
-}
-
 
 /* we install this event handler on the primary once we have connected to the backup */
 /* wait for "done" message to commit checkpoint */
@@ -1247,15 +1116,6 @@ static int server_do_wreq(td_driver_t *driver)
 	return -1;
 }
 
-static int server_do_sreq(td_driver_t *driver)
-{
-	/*
-	  RPRINTF("submit request received\n");
-  */
-
-	return 0;
-}
-
 /* at this point, the server can start applying the most recent
  * ramdisk. */
 static int server_do_creq(td_driver_t *driver)
@@ -1296,8 +1156,6 @@ static void remus_server_event(event_id_t id, char mode, void *private)
 
 	if (!strcmp(req, TDREMUS_WRITE))
 		server_do_wreq(driver);
-	else if (!strcmp(req, TDREMUS_SUBMIT))
-		server_do_sreq(driver);
 	else if (!strcmp(req, TDREMUS_COMMIT))
 		server_do_creq(driver);
 	else
