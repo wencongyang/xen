@@ -29,6 +29,7 @@ REMUS-OBJS  := block-remus.o
 REMUS-OBJS  += hashtable.o
 REMUS-OBJS  += hashtable_itr.o
 REMUS-OBJS  += hashtable_utility.o
+REMUS-OBJS  += block-replication.o
 
 tapdisk2 tapdisk-stream tapdisk-diff $(QCOW_UTIL): AIOLIBS := -laio
 
