@@ -1513,13 +1513,18 @@ static void ctl_request(event_id_t id, char mode, void *private)
 	/* TODO: need to get driver somehow */
 	msg[rc] = '\0';
 	if (!strncmp(msg, "flush", 5)) {
-		if (s->queue_flush)
+		if (s->mode == mode_primary) {
 			if ((rc = s->queue_flush(driver))) {
 				RPRINTF("error passing flush request to backup");
 				ctl_respond(s, TDREMUS_FAIL);
 			}
+		} else {
+			RPRINTF("We are not in primary mode\n");
+			ctl_respond(s, TDREMUS_FAIL);
+		}
 	} else {
 		RPRINTF("unknown command: %s\n", msg);
+		ctl_respond(s, TDREMUS_FAIL);
 	}
 }
 
