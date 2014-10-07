@@ -752,6 +752,8 @@ static void primary_failed(struct tdremus_state *s, int rc)
 	td_replication_connect_kill(&s->t);
 	if (rc == ERROR_INTERNAL)
 		RPRINTF("switch to unprotected mode due to internal error");
+	if (rc == ERROR_CLOSE)
+		RPRINTF("switch to unprotected mode before closing");
 	UNREGISTER_EVENT(s->stream_fd.id);
 	switch_mode(s->tdremus_driver, mode_unprotected);
 }
@@ -1500,6 +1502,17 @@ static int tdremus_open(td_driver_t *driver, td_image_t *image, td_uuid_t uuid)
 	return -EIO;
 }
 
+static int tdremus_pre_close(td_driver_t *driver)
+{
+	struct tdremus_state *s = (struct tdremus_state *)driver->data;
+
+	if (s->mode != mode_primary)
+		return 0;
+
+	primary_failed(s, ERROR_CLOSE);
+	return 0;
+}
+
 static int tdremus_close(td_driver_t *driver)
 {
 	struct tdremus_state *s = (struct tdremus_state *)driver->data;
@@ -1533,6 +1546,7 @@ struct tap_disk tapdisk_remus = {
 	.td_open            = tdremus_open,
 	.td_queue_read      = unprotected_queue_read,
 	.td_queue_write     = unprotected_queue_write,
+	.td_pre_close       = tdremus_pre_close,
 	.td_close           = tdremus_close,
 	.td_get_parent_id   = tdremus_get_parent_id,
 	.td_validate_parent = tdremus_validate_parent,
