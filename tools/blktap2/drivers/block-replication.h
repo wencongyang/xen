@@ -49,6 +49,7 @@ enum {
 	ERROR_INTERNAL = -1,
 	ERROR_CONNECTION = -2,
 	ERROR_IO = -3,
+	ERROR_CLOSE = -4,
 };
 
 typedef struct td_replication_connect td_replication_connect_t;

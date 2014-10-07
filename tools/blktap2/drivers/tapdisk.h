@@ -158,6 +158,7 @@ struct tap_disk {
 	td_flag_t                    flags;
 	int                          private_data_size;
 	int (*td_open)               (td_driver_t *, td_image_t *, td_uuid_t);
+	int (*td_pre_close)          (td_driver_t *);
 	int (*td_close)              (td_driver_t *);
 	int (*td_get_parent_id)      (td_driver_t *, td_disk_id_t *);
 	int (*td_validate_parent)    (td_driver_t *, td_driver_t *, td_flag_t);

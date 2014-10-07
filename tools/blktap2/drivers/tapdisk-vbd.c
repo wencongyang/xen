@@ -180,6 +180,15 @@ tapdisk_vbd_validate_chain(td_vbd_t *vbd)
 }
 
 void
+tapdisk_vbd_pre_close_vdi(td_vbd_t *vbd)
+{
+	td_image_t *image, *tmp;
+
+	tapdisk_vbd_for_each_image(vbd, image, tmp)
+		td_pre_close(image);
+}
+
+void
 tapdisk_vbd_close_vdi(td_vbd_t *vbd)
 {
 	td_image_t *image, *tmp;
