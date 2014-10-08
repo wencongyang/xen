@@ -2719,6 +2719,8 @@ int init_subkind_drbd_disk(libxl__checkpoint_devices_state *cds);
 void cleanup_subkind_drbd_disk(libxl__checkpoint_devices_state *cds);
 int init_subkind_blktap2_disk(libxl__checkpoint_devices_state *cds);
 void cleanup_subkind_blktap2_disk(libxl__checkpoint_devices_state *cds);
+int init_subkind_colo_nic(libxl__checkpoint_devices_state *cds);
+void cleanup_subkind_colo_nic(libxl__checkpoint_devices_state *cds);
 
 typedef void libxl__checkpoint_callback(libxl__egc *,
                                         libxl__checkpoint_devices_state *,
@@ -2834,6 +2836,7 @@ struct libxl__colo_save_state {
     libxl__checkpoint_devices_state cds;
     int send_fd;
     int recv_fd;
+    char *colo_agent_script;
 
     /* private */
     libxl__datacopier_state dc;
@@ -2845,6 +2848,11 @@ struct libxl__colo_save_state {
     uint8_t temp_buff[9];
     void (*callback)(libxl__egc *, libxl__colo_save_state *);
     bool svm_running;
+
+    /* private, used by colo-agent */
+    int fd;
+    int vm_fd;
+    libxl__ev_child child;
 };
 
 /*----- Domain suspend (save) state structure -----*/

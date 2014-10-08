@@ -1,0 +1,210 @@
+#! /bin/bash
+
+dir=$(dirname "$0")
+. "$dir/xen-hotplug-common.sh"
+. "$dir/hotplugpath.sh"
+. "$dir/xen-network-ft.sh"
+
+findCommand "$@"
+
+if [ "$command" != "setup" -a  "$command" != "teardown" ]
+then
+    echo "Invalid command: $command"
+    log err "Invalid command: $command"
+    exit 1
+fi
+
+evalVariables "$@"
+
+: ${vifname:?}
+: ${XENBUS_PATH:?}
+: ${forwarddev:?}
+: ${mode:?}
+: ${vmid:?}
+
+if [ "$mode" != "primary" -a "$mode" != "secondary" ]
+then
+    echo "Invalid mode: $mode"
+    log err "Invalid mode: $mode"
+    exit 1
+fi
+
+# redirect input packets from src_nic to dst_nic
+function redirect_nic_traffic()
+{
+    local src_nic=$1
+    local dst_nic=$2
+
+    if ! tc qdisc add dev $src_nic ingress > /dev/null 2>&1
+    then
+        fatal "Unable to add ingress qdisc to nic $src_nic"
+    fi
+
+    if ! tc filter add dev $src_nic parent ffff: protocol ip prio 10 \
+        u32 match u32 0 0 flowid 1:2 action mirred egress redirect dev \
+        $dst_nic > /dev/null 2>&1
+    then
+        fatal "Unable to redirect ip packets from $src_nic to $dst_nic"
+    fi
+
+    if ! tc filter add dev $src_nic parent ffff: protocol arp prio 11 \
+        u32 match u32 0 0 flowid 1:2 action mirred egress redirect dev \
+        $dst_nic > /dev/null 2>&1
+    then
+        fatal "Unable to redirect arp packets from $src_nic to $dst_nic"
+    fi
+}
+
+function stop_redirect_nic_traffic()
+{
+    local src_nic=$1
+
+    do_without_error tc filter del dev $src_nic parent ffff: protocol ip prio 10 u32
+    do_without_error tc filter del dev $src_nic parent ffff: protocol arp prio 11 u32
+    do_without_error tc qdisc del dev $src_nic ingress
+}
+
+# copy and forward input packets from src_nic to dst_nic
+function copy_and_forward_nic_traffic()
+{
+    local src_nic=$1
+    local dst_nic=$2
+
+    if ! tc qdisc add dev $src_nic root handle 1: prio > /dev/null 2>&1
+    then
+        fatal "Unable to add qdic prio to nic $src_nic"
+    fi
+
+    if ! tc filter add dev $src_nic parent 1: protocol ip prio 10 \
+        u32 match u32 0 0 flowid 1:2 action mirred egress mirror dev \
+        $dst_nic > /dev/null 2>&1
+    then
+        fatal "Unable to copy and forward ip packets from $src_nic to $dst_nic"
+    fi
+
+    if ! tc filter add dev $src_nic parent 1: protocol arp prio 11 \
+        u32 match u32 0 0 flowid 1:2 action mirred egress mirror dev \
+        $dst_nic > /dev/null 2>&1
+    then
+        fatal "Unable to copy and forward arp packets from $src_nic to $dst_nic"
+    fi
+}
+
+function stop_copy_and_forward_nic_traffic()
+{
+    local src_nic=$1
+
+    do_without_error tc filter del dev $src_nic parent 1: protocol ip prio 10 u32
+    do_without_error tc filter del dev $src_nic parent 1: protocol arp prio 11 u32
+    do_without_error tc qdisc del dev $src_nic root handle 1: prio
+}
+
+function teardown_ifb()
+{
+    local ifb=$1
+
+    if [ -z "$ifb" ]
+    then
+        return
+    fi
+
+    do_without_error ip link set dev "$ifb" down
+    do_without_error tc qdisc del dev "$ifb" root handle 1: colo
+}
+
+function setup_primary()
+{
+    $LIBEXEC_BIN/colo-tc qdisc add dev $IFB_PRIMARY root handle 1: colo \
+        dev $IFB_SECONDARY primary vmid $vmid
+    $LIBEXEC_BIN/colo-tc qdisc add dev $IFB_SECONDARY root handle 1: colo \
+        dev $IFB_PRIMARY secondary vmid $vmid
+
+    redirect_nic_traffic $forwarddev $IFB_SECONDARY
+    copy_and_forward_nic_traffic $vifname $forwarddev
+    redirect_nic_traffic $vifname $IFB_PRIMARY
+    if ! ifconfig $forwarddev promisc
+    then
+        fatal "device $forwarddev cannot enter promiscuous mode"
+    fi
+}
+
+function teardown_primary()
+{
+    local ifb=
+
+    if xenstore-exits "$XENBUS_PATH/ifb_primary"
+    then
+        ifb=`xenstore-read "$XENBUS_PATH/ifb_primary" 2>/dev/null || true`
+        IFB_PRIMARY=$ifb
+        teardown_ifb "$ifb"
+    fi
+
+    if xenstore-exits "$XENBUS_PATH/ifb_secondary"
+    then
+        ifb=`xenstore-read "$XENBUS_PATH/ifb_secondary" 2>/dev/null || true`
+        IFB_SECONDARY=$ifb
+        teardown_ifb "$ifb"
+    fi
+
+    stop_redirect_nic_traffic $forwarddev
+    stop_redirect_nic_traffic $vifname
+    stop_copy_and_forward_nic_traffic $vifname
+
+    do_without_error ifconfig $forwarddev -promisc
+}
+
+function setup_secondary()
+{
+    redirect_nic_traffic $forwarddev $vifname
+    redirect_nic_traffic $vifname $forwarddev
+
+    if ! ifconfig $forwarddev promisc
+    then
+        fatal "device $forwarddev cannot enter promiscuous mode"
+    fi
+}
+
+function teardown_secondary()
+{
+    stop_redirect_nic_traffic $vifname
+    stop_redirect_nic_traffic $forwarddev
+
+    do_without_error ifconfig $forwarddev -promisc
+}
+
+case "$command" in
+    setup)
+        if [ "$mode" = "primary" ]
+        then
+            claim_lock "pickifb"
+            setup_ifb $vifname ifb_primary
+            IFB_PRIMARY=$ifb
+            setup_ifb $vifname ifb_secondary
+            IFB_SECONDARY=$ifb
+            setup_primary
+            release_lock "pickifb"
+        else
+            setup_secondary
+        fi
+
+        success
+        ;;
+    teardown)
+        if [ "$mode" = "primary" ]
+        then
+            teardown_primary
+        else
+            teardown_secondary
+        fi
+        ;;
+esac
+
+if [ "$mode" = "primary" ]
+then
+    log debug "Successful colo-agent-setup $command for $vifname." \
+              " ifb_primary: $IFB_PRIMARY, ifb_secondary: $IFB_SECONDARY, " \
+              "forwarddev: $forwarddev."
+else
+    log debug "Successful colo-agent-setup $command for $vifname."\
+              " forwarddev $forwarddev."
+fi

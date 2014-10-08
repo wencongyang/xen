@@ -1615,6 +1615,9 @@ static void parse_config_data(const char *config_source,
                 } else if (!strcmp(p, "gatewaydev")) {
                     free(nic->gatewaydev);
                     nic->gatewaydev = strdup(p2 + 1);
+                } else if (!strcmp(p, "forwarddev")) {
+                    free(nic->forwarddev);
+                    nic->forwarddev = strdup(p2 + 1);
                 }
             } while ((p = strtok(NULL, ",")) != NULL);
 skip_nic:

@@ -76,6 +76,7 @@
 #specific setup code such as renaming.
 dir=$(dirname "$0")
 . "$dir/xen-hotplug-common.sh"
+. "$dir/xen-network-ft.sh"
 
 findCommand "$@"
 
@@ -114,47 +115,6 @@ check_modules() {
             fatal "Unable to find $m kernel module"
         fi
     done
-}
-
-#return 0 if the ifb is free
-check_ifb() {
-    local installed=`nl-qdisc-list -d $1`
-    [ -n "$installed" ] && return 1
-
-    for domid in `xenstore-list "/local/domain" 2>/dev/null || true`
-    do
-        [ $domid -eq 0 ] && continue
-        xenstore-exists "/libxl/$domid/remus/netbuf" || continue
-        for devid in `xenstore-list "/libxl/$domid/remus/netbuf" 2>/dev/null || true`
-        do
-            local path="/libxl/$domid/remus/netbuf/$devid/ifb"
-            xenstore-exists $path || continue
-            local ifb=`xenstore-read "$path" 2>/dev/null || true`
-            [ "$ifb" = "$1" ] && return 1
-        done
-    done
-
-    return 0
-}
-
-setup_ifb() {
-
-    for ifb in `ifconfig -a -s|egrep ^ifb|cut -d ' ' -f1`
-    do
-        check_ifb "$ifb" || continue
-        REMUS_IFB="$ifb"
-        break
-    done
-
-    if [ -z "$REMUS_IFB" ]
-    then
-        fatal "Unable to find a free ifb device for $vifname"
-    fi
-
-    #not using xenstore_write that automatically exits on error
-    #because we need to cleanup
-    xenstore_write "$XENBUS_PATH/ifb" "$REMUS_IFB"
-    do_or_die ip link set dev "$REMUS_IFB" up
 }
 
 redirect_vif_traffic() {
@@ -215,7 +175,8 @@ case "$command" in
         check_modules
 
         claim_lock "pickifb"
-        setup_ifb
+        setup_ifb $vifname ifb
+        REMUS_IFB=$ifb
         redirect_vif_traffic "$vifname" "$REMUS_IFB"
         add_plug_qdisc "$vifname" "$REMUS_IFB"
         release_lock "pickifb"

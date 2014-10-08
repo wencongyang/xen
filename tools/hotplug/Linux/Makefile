@@ -26,12 +26,14 @@ XEN_SCRIPTS += vscsi
 XEN_SCRIPTS += block-iscsi
 XEN_SCRIPTS += block-drbd-probe
 XEN_SCRIPTS += $(XEN_SCRIPTS-y)
+XEN_SCRIPTS += colo-agent-setup
 
 SUBDIRS-$(CONFIG_SYSTEMD) += systemd
 
 XEN_SCRIPT_DATA = xen-script-common.sh locking.sh logging.sh
 XEN_SCRIPT_DATA += xen-hotplug-common.sh xen-network-common.sh vif-common.sh
 XEN_SCRIPT_DATA += block-common.sh
+XEN_SCRIPT_DATA += xen-network-ft.sh
 
 UDEV_RULES_DIR = $(CONFIG_DIR)/udev
 UDEV_RULES = xen-backend.rules $(UDEV_RULES-y)
