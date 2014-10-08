@@ -110,4 +110,69 @@ int td_replication_server_restart(td_replication_connect_t *t);
  */
 int td_replication_client_start(td_replication_connect_t *t);
 
+/* I/O replication */
+typedef struct ramdisk ramdisk_t;
+struct ramdisk {
+	size_t sector_size;
+	const char *log_prefix;
+	td_image_t *image;
+
+	/* private */
+	/* count of outstanding requests to the base driver */
+	size_t inflight;
+	/* prev holds the requests to be flushed, while inprogress holds
+	 * requests being flushed. When requests complete, they are removed
+	 * from inprogress.
+	 * Whenever a new flush is merged with ongoing flush (i.e, prev),
+	 * we have to make sure that none of the new requests overlap with
+	 * ones in "inprogress". If it does, keep it back in prev and dont issue
+	 * IO until the current one finishes. If we allow this IO to proceed,
+	 * we might end up with two "overlapping" requests in the disk's queue and
+	 * the disk may not offer any guarantee on which one is written first.
+	 * IOW, make sure we dont create a write-after-write time ordering constraint.
+	 */
+	struct hashtable *prev;
+	struct hashtable *inprogress;
+	/*
+	 * The primary write request is queued in this
+	 * hashtable, and will be flushed to ramdisk when
+	 * the checkpoint finishes.
+	 */
+	struct hashtable *primary_cache;
+};
+
+int ramdisk_init(ramdisk_t *ramdisk);
+void ramdisk_destroy(ramdisk_t *ramdisk);
+
+/*
+ * try to read from ramdisk. Return -1 if some sectors are not in
+ * ramdisk. Otherwise, return 0.
+ */
+int ramdisk_read(ramdisk_t *ramdisk, uint64_t sector,
+		 int nb_sectors, char *buf);
+
+/*
+ * cache the write requests, and it will be flushed after a
+ * new checkpoint finishes
+ */
+int ramdisk_cache_write_request(ramdisk_t *ramdisk, uint64_t sector,
+				int nb_sectors, size_t sector_size,
+				char* buf, const char *log_prefix);
+
+/* flush pended write requests to disk */
+int ramdisk_flush_pended_requests(ramdisk_t *ramdisk);
+/*
+ * flush cached write requests to disk. If WAW is detected, the cached
+ * write requests will be moved to pended queue. The pended write
+ * requests will be auto flushed after all inprogress write requests
+ * are flushed to disk. This function don't wait all write requests
+ * are flushed to disk.
+ */
+int ramdisk_start_flush(ramdisk_t *ramdisk);
+/*
+ * Return true if some write reqeusts are inprogress or pended,
+ * otherwise return false
+ */
+int ramdisk_writes_inflight(ramdisk_t *ramdisk);
+
 #endif
