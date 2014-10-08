@@ -2413,7 +2413,7 @@ static void device_disk_add(libxl__egc *egc, uint32_t domid,
                 }
                 flexarray_append(back, "tapdisk-params");
                 flexarray_append(back, libxl__sprintf(gc, "%s:%s",
-                    libxl__device_disk_string_of_format(disk->format),
+                    libxl_disk_format_to_string(disk->format),
                     disk->pdev_path));
 
                 /* tap backends with scripts are rejected by
@@ -2523,6 +2523,55 @@ void libxl__device_disk_add(libxl__egc *egc, uint32_t domid,
     device_disk_add(egc, domid, disk, aodev, NULL, NULL);
 }
 
+/*
+ * read params from xenstore node. The params's format should be
+ * "format:path" or "path". If the xenstore node doesn't exist,
+ * return 0, and both *format and *path are NULL. On success,
+ * the caller should be free *path by hand.
+ */
+static int read_params(libxl__gc *gc, const char *be_path,
+                       char **format, char **path)
+{
+    char *params, *tmp;
+
+    assert(format != NULL && path != NULL);
+
+    *format = NULL;
+    *path = NULL;
+
+    params = libxl__xs_read(gc, XBT_NULL, be_path);
+    if (!params) {
+        if (errno == ENOENT)
+            return 0;
+
+        LOGE(ERROR, "cannot read %s", be_path);
+        return ERROR_FAIL;
+    }
+
+    tmp = strchr(params, ':');
+    if (!tmp) {
+        *path = strdup(params);
+        if (*path == NULL)
+            goto out;
+
+        return 0;
+    }
+
+    *path = strdup(tmp + 1);
+    if (*path == NULL)
+        goto out;
+
+    *tmp = '\0';
+    *format = params;
+
+    return 0;
+
+out:
+    LOGE(ERROR, "no memory to store path");
+
+    return ERROR_NOMEM;
+}
+
 static int libxl__device_disk_from_xs_be(libxl__gc *gc,
                                          const char *be_path,
                                          libxl_device_disk *disk)
@@ -2540,24 +2589,48 @@ static int libxl__device_disk_from_xs_be(libxl__gc *gc,
         goto cleanup;
     }
 
-    /* "params" may not be present; but everything else must be. */
-    tmp = xs_read(ctx->xsh, XBT_NULL,
-                  libxl__sprintf(gc, "%s/params", be_path), &len);
-    if (tmp && strchr(tmp, ':')) {
-        disk->pdev_path = strdup(strchr(tmp, ':') + 1);
-        free(tmp);
-    } else {
-        disk->pdev_path = tmp;
-    }
-
-
-    tmp = libxl__xs_read(gc, XBT_NULL,
-                         libxl__sprintf(gc, "%s/type", be_path));
-    if (!tmp) {
-        LOG(ERROR, "Missing xenstore node %s/type", be_path);
+    /* "tapdisk-params" is only for tapdisk */
+    rc = read_params(gc, GCSPRINTF("%s/tapdisk-params", be_path),
+                     &tmp, &disk->pdev_path);
+    if (rc)
         goto cleanup;
+    if (tmp || disk->pdev_path) {
+        if (!tmp) {
+            LOG(ERROR, "corrupted tapdisk-params: %s", disk->pdev_path);
+            goto cleanup;
+        }
+        rc = libxl_disk_format_from_string(tmp, &disk->format);
+        if (rc) {
+            LOG(ERROR, "unknown disk format: %s", tmp);
+            goto cleanup;
+        }
+        if (disk->format != LIBXL_DISK_FORMAT_VHD &&
+            disk->format != LIBXL_DISK_FORMAT_RAW) {
+            /* We can get here only when the xenstore node is corrupted */
+            LOG(ERROR, "unsupported tapdisk format: %s", tmp);
+            goto cleanup;
+        }
+
+        /*
+         * The backend is tapdisk, so we store tapdev in params, and
+         * phy in type(see device_disk_add())
+         */
+        disk->backend = LIBXL_DISK_BACKEND_TAP;
+    } else {
+        /* "params" may not be present; but everything else must be. */
+        rc = read_params(gc, GCSPRINTF("%s/params", be_path),
+                         &tmp, &disk->pdev_path);
+        if (rc)
+            goto cleanup;
+
+        tmp = libxl__xs_read(gc, XBT_NULL,
+                             libxl__sprintf(gc, "%s/type", be_path));
+        if (!tmp) {
+            LOG(ERROR, "Missing xenstore node %s/type", be_path);
+            goto cleanup;
+        }
+        libxl_string_to_backend(ctx, tmp, &(disk->backend));
     }
-    libxl_string_to_backend(ctx, tmp, &(disk->backend));
 
     disk->vdev = xs_read(ctx->xsh, XBT_NULL,
                          libxl__sprintf(gc, "%s/dev", be_path), &len);
@@ -2591,8 +2664,6 @@ static int libxl__device_disk_from_xs_be(libxl__gc *gc,
         goto cleanup;
     }
     disk->is_cdrom = !strcmp(tmp, "cdrom");
-
-    disk->format = LIBXL_DISK_FORMAT_UNKNOWN;
 
     return 0;
 cleanup:
