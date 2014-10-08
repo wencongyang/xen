@@ -2717,6 +2717,8 @@ int init_subkind_nic(libxl__checkpoint_devices_state *cds);
 void cleanup_subkind_nic(libxl__checkpoint_devices_state *cds);
 int init_subkind_drbd_disk(libxl__checkpoint_devices_state *cds);
 void cleanup_subkind_drbd_disk(libxl__checkpoint_devices_state *cds);
+int init_subkind_blktap2_disk(libxl__checkpoint_devices_state *cds);
+void cleanup_subkind_blktap2_disk(libxl__checkpoint_devices_state *cds);
 
 typedef void libxl__checkpoint_callback(libxl__egc *,
                                         libxl__checkpoint_devices_state *,

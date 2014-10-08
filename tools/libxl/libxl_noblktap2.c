@@ -37,6 +37,35 @@ int libxl__device_destroy_tapdisk(libxl__gc *gc,
     return 0;
 }
 
+static int blktap2_colo_init(libxl__checkpoint_device *cds)
+{
+    return 0;
+}
+
+static void blktap2_colo_cleanup(libxl__checkpoint_device *cds)
+{
+    return;
+}
+
+static void blktap2_colo_setup(libxl__checkpoint_device *cds)
+{
+    dev->aodev.rc = ERROR_FAIL;
+    dev->aodev.callback(dev->cds->egc, &dev->aodev);
+}
+
+static void blktap2_colo_teardown(libxl__checkpoint_device *cds)
+{
+    return;
+}
+
+const libxl__checkpoint_device_instance_ops colo_save_device_blktap2_disk = {
+    .kind = LIBXL__CHECKPOINT_DEVICE_DISK,
+    .init = blktap2_colo_init,
+    .cleanup = blktap2_colo_cleanup,
+    .setup = blktap2_colo_setup,
+    .teardown = blktap2_colo_teardown,
+};
+
 /*
  * Local variables:
  * mode: C
