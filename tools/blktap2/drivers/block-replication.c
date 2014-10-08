@@ -732,6 +732,12 @@ int ramdisk_init(ramdisk_t *ramdisk)
 	if (!ramdisk->primary_cache)
 		return -1;
 
+	ramdisk->secondary_cache = ramdisk_new_hashtable();
+	if (!ramdisk->secondary_cache) {
+		HASHTABLE_DESTROY(ramdisk->primary_cache, 0);
+		return -1;
+	}
+
 	return 0;
 }
 
@@ -780,14 +786,46 @@ int ramdisk_read(ramdisk_t *ramdisk, uint64_t sector,
 	return 0;
 }
 
-int ramdisk_cache_write_request(ramdisk_t *ramdisk, uint64_t sector,
-				int nb_sectors, size_t sector_size,
-				char *buf, const char *log_prefix)
+int ramdisk_read_from_cache(ramdisk_t *ramdisk, uint64_t sector,
+			    int nb_sectors, int sector_size,
+			    char *buf, int use_primary_cache)
 {
-	int i, rc;
+	int i;
+	uint64_t key;
+	char *v;
+	struct hashtable *cache;
+
+	if (use_primary_cache)
+		cache = ramdisk->primary_cache;
+	else
+		cache = ramdisk->secondary_cache;
 
 	for (i = 0; i < nb_sectors; i++) {
-		rc = ramdisk_write_hash(ramdisk->primary_cache, sector + i,
+		key = sector + i;
+		v = hashtable_search(cache, &key);
+		if (!v)
+			return -1;
+		memcpy(buf + i * sector_size, v, sector_size);
+	}
+
+	return 0;
+}
+
+int ramdisk_cache_write_request(ramdisk_t *ramdisk, uint64_t sector,
+				int nb_sectors, size_t sector_size,
+				char *buf, const char *log_prefix,
+				int use_primary_cache)
+{
+	int i, rc;
+	struct hashtable *cache;
+
+	if (use_primary_cache)
+		cache = ramdisk->primary_cache;
+	else
+		cache = ramdisk->secondary_cache;
+
+	for (i = 0; i < nb_sectors; i++) {
+		rc = ramdisk_write_hash(cache, sector + i,
 					buf + i * sector_size,
 					sector_size, log_prefix);
 		if (rc)
@@ -870,7 +908,7 @@ int ramdisk_flush_pended_requests(ramdisk_t *ramdisk)
 	return 0;
 }
 
-int ramdisk_start_flush(ramdisk_t *ramdisk)
+int ramdisk_start_flush(ramdisk_t *ramdisk, int flush_primary_cache)
 {
 	uint64_t *key;
 	char *buf;
@@ -880,7 +918,10 @@ int ramdisk_start_flush(ramdisk_t *ramdisk)
 	const char *log_prefix = ramdisk->log_prefix;
 	struct hashtable *cache;
 
-	cache = ramdisk->primary_cache;
+	if (flush_primary_cache)
+		cache = ramdisk->primary_cache;
+	else
+		cache = ramdisk->secondary_cache;
 	if (!hashtable_count(cache))
 		return 0;
 
@@ -910,13 +951,39 @@ int ramdisk_start_flush(ramdisk_t *ramdisk)
 	 * We create a new hashtable so that new writes can be performed before
 	 * the old hashtable is completely drained.
 	 */
-	ramdisk->primary_cache = ramdisk_new_hashtable();
-	if (!ramdisk->primary_cache) {
+	cache = ramdisk_new_hashtable();
+	if (flush_primary_cache)
+		ramdisk->primary_cache = cache;
+	else
+		ramdisk->secondary_cache = cache;
+	if (!cache) {
 		EPRINTF("ramdisk_start_flush: creating cache table failed: OOM\n");
 		return -1;
 	}
 
 	return ramdisk_flush_pended_requests(ramdisk);
+}
+
+int ramdisk_clear_cache(ramdisk_t *ramdisk, int use_primary_cache)
+{
+	struct hashtable *cache;
+
+	if (use_primary_cache)
+		cache = ramdisk->primary_cache;
+	else
+		cache = ramdisk->secondary_cache;
+
+	hashtable_destroy(cache, 1);
+
+	cache = ramdisk_new_hashtable();
+	if (use_primary_cache)
+		ramdisk->primary_cache = cache;
+	else
+		ramdisk->secondary_cache = cache;
+	if (!cache)
+		return 1;
+
+	return 0;
 }
 
 int ramdisk_writes_inflight(ramdisk_t *ramdisk)
@@ -925,4 +992,181 @@ int ramdisk_writes_inflight(ramdisk_t *ramdisk)
 		return 0;
 
 	return 1;
+}
+
+/* async I/O */
+static void td_async_io_readable(event_id_t id, char mode, void *private);
+static void td_async_io_writeable(event_id_t id, char mode, void *private);
+static void td_async_io_timeout(event_id_t id, char mode, void *private);
+
+void td_async_io_init(td_async_io_t *taio)
+{
+	memset(taio, 0, sizeof(*taio));
+	taio->fd = -1;
+	taio->timeout_id = -1;
+	taio->io_id = -1;
+}
+
+int td_async_io_start(td_async_io_t *taio)
+{
+	event_id_t id;
+
+	if (taio->running)
+		return -1;
+
+	if (taio->size <= 0 || taio->fd < 0)
+		return -1;
+
+	taio->running = 1;
+
+	if (taio->mode == td_async_read)
+		id = tapdisk_server_register_event(SCHEDULER_POLL_READ_FD,
+						   taio->fd, 0,
+						   td_async_io_readable,
+						   taio);
+	else if (taio->mode == td_async_write)
+		id = tapdisk_server_register_event(SCHEDULER_POLL_WRITE_FD,
+						   taio->fd, 0,
+						   td_async_io_writeable,
+						   taio);
+	else
+		id = -1;
+	if (id < 0)
+		goto err;
+	taio->io_id = id;
+
+	if (taio->timeout_s) {
+		id = tapdisk_server_register_event(SCHEDULER_POLL_TIMEOUT,
+						   -1, taio->timeout_s,
+						   td_async_io_timeout, taio);
+		if (id < 0)
+			goto err;
+		taio->timeout_id = id;
+	}
+
+	taio->used = 0;
+	return 0;
+
+err:
+	td_async_io_kill(taio);
+	return -1;
+}
+
+static void td_async_io_callback(td_async_io_t *taio, int realsize,
+				 int errnoval)
+{
+	td_async_io_kill(taio);
+	taio->callback(taio, realsize, errnoval);
+}
+
+static void td_async_io_update_timeout(td_async_io_t *taio)
+{
+	event_id_t id;
+
+	if (!taio->timeout_s)
+		return;
+
+	tapdisk_server_unregister_event(taio->timeout_id);
+	taio->timeout_id = -1;
+
+	id = tapdisk_server_register_event(SCHEDULER_POLL_TIMEOUT,
+					   -1, taio->timeout_s,
+					   td_async_io_timeout, taio);
+	if (id < 0)
+		td_async_io_callback(taio, -1, id);
+	else
+		taio->timeout_id = id;
+}
+
+static void td_async_io_readable(event_id_t id, char mode, void *private)
+{
+	td_async_io_t *taio = private;
+	int rc;
+
+	while (1) {
+		rc = read(taio->fd, taio->buff + taio->used,
+			  taio->size - taio->used);
+		if (rc < 0) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EWOULDBLOCK || errno == EAGAIN)
+				break;
+
+			td_async_io_callback(taio, 0, errno);
+			return;
+		}
+
+		if (rc == 0) {
+			td_async_io_callback(taio, taio->used, 0);
+			return;
+		}
+
+		taio->used += rc;
+		if (taio->used == taio->size) {
+			td_async_io_callback(taio, taio->used, 0);
+			return;
+		}
+	}
+
+	td_async_io_update_timeout(taio);
+}
+
+static void td_async_io_writeable(event_id_t id, char mode, void *private)
+{
+	td_async_io_t *taio = private;
+	int rc;
+
+	while (1) {
+		rc = write(taio->fd, taio->buff + taio->used,
+			   taio->size - taio->used);
+
+		if (rc < 0) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EWOULDBLOCK || errno == EAGAIN)
+				break;
+
+			td_async_io_callback(taio, 0, errno);
+			return;
+		}
+
+		taio->used += rc;
+		if (taio->used == taio->size) {
+			td_async_io_callback(taio, taio->used, 0);
+			return;
+		}
+	}
+
+	td_async_io_update_timeout(taio);
+}
+
+static void td_async_io_timeout(event_id_t id, char mode, void *private)
+{
+	td_async_io_t *taio = private;
+
+	td_async_io_kill(taio);
+	taio->callback(taio, 0, ETIME);
+}
+
+int td_async_io_is_running(td_async_io_t *taio)
+{
+	return taio->running;
+}
+
+void td_async_io_kill(td_async_io_t *taio)
+{
+	if (!taio->running)
+		return;
+
+	if (taio->timeout_id >= 0) {
+		tapdisk_server_unregister_event(taio->timeout_id);
+		taio->timeout_id = -1;
+	}
+
+	if (taio->io_id >= 0) {
+		tapdisk_server_unregister_event(taio->io_id);
+		taio->io_id = -1;
+	}
+
+	taio->running = 0;
 }

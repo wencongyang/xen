@@ -139,6 +139,12 @@ struct ramdisk {
 	 * the checkpoint finishes.
 	 */
 	struct hashtable *primary_cache;
+	/*
+	 * The secondary vm write request is queued in this
+	 * hashtable, and will be dropped when the checkpoint
+	 * finishes or flushed to ramdisk after failover.
+	 */
+	struct hashtable *secondary_cache;
 };
 
 int ramdisk_init(ramdisk_t *ramdisk);
@@ -152,12 +158,21 @@ int ramdisk_read(ramdisk_t *ramdisk, uint64_t sector,
 		 int nb_sectors, char *buf);
 
 /*
+ * try to read from ramdisk's cache. Return -1 if some sectors are not in
+ * ramdisk's cache. Otherwise, return 0.
+ */
+int ramdisk_read_from_cache(ramdisk_t *ramdisk, uint64_t sector,
+			    int nb_sectors, int sector_size,
+			    char *buf, int use_primary_cache);
+
+/*
  * cache the write requests, and it will be flushed after a
  * new checkpoint finishes
  */
 int ramdisk_cache_write_request(ramdisk_t *ramdisk, uint64_t sector,
 				int nb_sectors, size_t sector_size,
-				char* buf, const char *log_prefix);
+				char* buf, const char *log_prefix,
+				int use_primary_cache);
 
 /* flush pended write requests to disk */
 int ramdisk_flush_pended_requests(ramdisk_t *ramdisk);
@@ -168,11 +183,69 @@ int ramdisk_flush_pended_requests(ramdisk_t *ramdisk);
  * are flushed to disk. This function don't wait all write requests
  * are flushed to disk.
  */
-int ramdisk_start_flush(ramdisk_t *ramdisk);
+int ramdisk_start_flush(ramdisk_t *ramdisk, int flush_primary_cache);
+/*
+ * clear the write requests that are stored in the cache, all write requests
+ * will be dropped.
+ */
+int ramdisk_clear_cache(ramdisk_t *ramdisk, int use_primary_cache);
 /*
  * Return true if some write reqeusts are inprogress or pended,
  * otherwise return false
  */
 int ramdisk_writes_inflight(ramdisk_t *ramdisk);
+
+/* async I/O, don't support read/write at the same time */
+typedef struct td_async_io td_async_io_t;
+enum {
+	td_async_read,
+	td_async_write,
+};
+
+/*
+ * realsize >= 1 means all data was read/written
+ * realsize == 0 means failure happened when reading/writing, and
+ * errnoval is valid
+ * realsize == -1 means some other internal failure happended, and
+ * errnoval is also valid
+ * In all cases async_io is killed before calling this callback
+ *
+ * If we don't read/write any more data in timeout_s seconds, realsize is
+ * 0, and errnoval is ETIME
+ *
+ * If timeout_s is 0, timeout will be disabled.
+ *
+ * NOTE: realsize is less than taio->size, if we read EOF.
+ */
+typedef void taio_callback(td_async_io_t *taio, int realsize,
+			   int errnoval);
+
+struct td_async_io {
+	/* caller must fill these in, and they must all remain valid */
+	int fd;
+	int timeout_s;
+	int mode;
+	/*
+	 * read: store the data to buff
+	 * write: point to the data to be written
+	 */
+	void *buff;
+	int size;
+	taio_callback *callback;
+
+	/* private */
+	event_id_t timeout_id, io_id;
+	int used;
+	int running;
+};
+
+/* Don't call it when td_async_io is running */
+void td_async_io_init(td_async_io_t *taio);
+/* return -1 if we find some error. Otherwise, return 0 */
+int td_async_io_start(td_async_io_t *taio);
+/* return 1 if td_async_io is running, otherwise return 0 */
+int td_async_io_is_running(td_async_io_t *taio);
+/* The callback will not be called */
+void td_async_io_kill(td_async_io_t *taio);
 
 #endif

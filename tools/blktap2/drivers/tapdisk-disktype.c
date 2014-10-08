@@ -94,6 +94,12 @@ static const disk_info_t remus_disk = {
        0,
 };
 
+static const disk_info_t colo_disk = {
+	"colo",
+	"colo disk replicator (COLO)",
+	0,
+};
+
 const disk_info_t *tapdisk_disk_types[] = {
 	[DISK_TYPE_AIO]	= &aio_disk,
 	[DISK_TYPE_SYNC]	= &sync_disk,
@@ -105,6 +111,7 @@ const disk_info_t *tapdisk_disk_types[] = {
 	[DISK_TYPE_BLOCK_CACHE] = &block_cache_disk,
 	[DISK_TYPE_LOG]	= &log_disk,
 	[DISK_TYPE_REMUS]	= &remus_disk,
+	[DISK_TYPE_COLO]	= &colo_disk,
 	[DISK_TYPE_MAX]		= NULL,
 };
 
@@ -119,6 +126,7 @@ extern struct tap_disk tapdisk_block_cache;
 extern struct tap_disk tapdisk_vhd_index;
 extern struct tap_disk tapdisk_log;
 extern struct tap_disk tapdisk_remus;
+extern struct tap_disk tapdisk_colo;
 
 const struct tap_disk *tapdisk_disk_drivers[] = {
 	[DISK_TYPE_AIO]         = &tapdisk_aio,
@@ -132,6 +140,7 @@ const struct tap_disk *tapdisk_disk_drivers[] = {
 	[DISK_TYPE_BLOCK_CACHE] = &tapdisk_block_cache,
 	[DISK_TYPE_LOG]         = &tapdisk_log,
 	[DISK_TYPE_REMUS]       = &tapdisk_remus,
+	[DISK_TYPE_COLO]        = &tapdisk_colo,
 	[DISK_TYPE_MAX]         = NULL,
 };
 

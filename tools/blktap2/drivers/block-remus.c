@@ -672,7 +672,7 @@ static void server_do_wreq(td_driver_t *driver)
 
 	if (ramdisk_cache_write_request(&s->ramdisk, *sector, *sectors,
 					driver->info.sector_size, buf,
-					"remus") < 0) {
+					"remus", 1) < 0) {
 		rc = ERROR_INTERNAL;
 		goto err;
 	}
@@ -693,7 +693,7 @@ static void server_do_creq(td_driver_t *driver)
 
 	// RPRINTF("committing buffer\n");
 
-	ramdisk_start_flush(&s->ramdisk);
+	ramdisk_start_flush(&s->ramdisk, 1);
 
 	/* XXX this message should not be sent until flush completes! */
 	if (write(s->stream_fd.fd, TDREMUS_DONE, strlen(TDREMUS_DONE)) != 4)
