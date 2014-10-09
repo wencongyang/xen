@@ -2672,6 +2672,8 @@ int init_subkind_nic(libxl__remus_devices_state *rds);
 void cleanup_subkind_nic(libxl__remus_devices_state *rds);
 int init_subkind_drbd_disk(libxl__remus_devices_state *rds);
 void cleanup_subkind_drbd_disk(libxl__remus_devices_state *rds);
+int init_subkind_blktap_disk(libxl__remus_devices_state *rds);
+void cleanup_subkind_blktap_disk(libxl__remus_devices_state *rds);
 
 typedef void libxl__remus_callback(libxl__egc *,
                                    libxl__remus_devices_state *, int rc);
