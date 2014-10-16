@@ -30,7 +30,7 @@
 #define COLO_CONNRETRY_TIMEOUT  1
 
 /* timeout for reads and writes in second */
-#define HEARTBEAT_S 1
+#define HEARTBEAT_S 100
 
 /* TAPDISK_DATA_REQUESTS I/O requests + commit flag */
 #define MAX_COLO_REQUEST        TAPDISK_DATA_REQUESTS + 1
