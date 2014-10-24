@@ -476,6 +476,24 @@ int libxl_domain_rename(libxl_ctx *ctx, uint32_t domid,
     return rc;
 }
 
+int libxl__domain_restore(libxl__gc *gc, uint32_t domid)
+{
+    int rc = 0;
+
+    libxl_domain_type type = libxl__domain_type(gc, domid);
+    if (type != LIBXL_DOMAIN_TYPE_HVM) {
+        rc = ERROR_FAIL;
+        goto out;
+    }
+
+    rc = libxl__domain_restore_device_model(gc, domid);
+    if (rc)
+        LOG(ERROR, "failed to restore device mode for domain %u:%d",
+            domid, rc);
+out:
+    return rc;
+}
+
 int libxl__domain_resume(libxl__gc *gc, uint32_t domid, int suspend_cancel)
 {
     int rc = 0;
@@ -985,11 +1003,8 @@ out:
     return AO_INPROGRESS;
 }
 
-int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
+int libxl__domain_unpause(libxl__gc *gc, uint32_t domid)
 {
-    GC_INIT(ctx);
-    char *path;
-    char *state;
     int ret, rc = 0;
 
     libxl_domain_type type = libxl__domain_type(gc, domid);
@@ -999,20 +1014,29 @@ int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
     }
 
     if (type == LIBXL_DOMAIN_TYPE_HVM) {
-        path = libxl__sprintf(gc, "/local/domain/0/device-model/%d/state", domid);
-        state = libxl__xs_read(gc, XBT_NULL, path);
-        if (state != NULL && !strcmp(state, "paused")) {
-            libxl__qemu_traditional_cmd(gc, domid, "continue");
-            libxl__wait_for_device_model_deprecated(gc, domid, "running",
-                                         NULL, NULL, NULL);
+        rc = libxl__domain_unpause_device_model(gc, domid);
+        if (rc < 0) {
+            LOG(ERROR, "failed to unpause device model for domain %u:%d",
+                domid, rc);
+            goto out;
         }
     }
-    ret = xc_domain_unpause(ctx->xch, domid);
-    if (ret<0) {
-        LIBXL__LOG_ERRNO(ctx, LIBXL__LOG_ERROR, "unpausing domain %d", domid);
+
+    ret = xc_domain_unpause(CTX->xch, domid);
+    if (ret < 0) {
+        LOGE(ERROR, "unpausing domain %d", domid);
         rc = ERROR_FAIL;
     }
- out:
+
+out:
+    return rc;
+}
+
+int libxl_domain_unpause(libxl_ctx *ctx, uint32_t domid)
+{
+    GC_INIT(ctx);
+    int rc = libxl__domain_unpause(gc, domid);
+
     GC_FREE;
     return rc;
 }
