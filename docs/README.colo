@@ -1,0 +1,42 @@
+COLO provides fault tolerance for virtual machines by sending continuous
+checkpoints to a backup, which will activate if the target VM fails. It
+only supports HVM guest(without pv extensions). If you want to use
+OEM released guest os, please use SUSE. REDHAT and Ubuntu is not supported
+now because I don't find any way to disable pv extensions.
+
+The steps to setup COLO environment:
+1. Build and install xen
+2. Apply the patch for qemu, and rebuild xen tools:
+    http://lists.xenproject.org/archives/html/xen-devel/2014-10/msg02990.html
+3. Install the guest
+    3.1 Add "xen_platform_pci=0" into the guest configfile
+    3.2 If you use suse, please select physical machine
+4. Install COLO agent module:
+    4.1 Download COLO agent, and compile it:
+    4.2 Install it: it is the kernel module, so copy the module to
+        the directory /lib/modules/<version>/updates/, and run depmod.
+5. Update your guest config file for COLO:
+    5.1 disk
+        disk = [ 'format=raw,devtype=disk,access=w,vdev=hda,backendtype=tap,filter=colo,filter-params=192.168.3.1:9000,target=/root/images/hvm/hvm_nopv/hvm.img' ]
+    5.2 nic
+        vif = [ 'mac=00:16:4f:00:00:11, bridge=br0, model=e1000, forwarddev=eth0' ]
+6. Run COLO:
+    xl remus -c -u <domname> <secondary host IP>
+
+The COLO agent module doesn't include codes which are experimental and
+improve the performance. The codes are in the branch experimental. If
+you use this branch, you need to load some kernel modules by hand after
+running COLO. The module sch_colo_ipv4 should be loaded before loading
+sch_colo_icmp, sch_colo_tcp and sch_colo_udp.
+
+The known problem:
+1. Secondary vm may crash due to triple fault.
+2. The heartbeat is not reliable. If you want to test the performance,
+   please disable the heartbeat(modify the xen codes)
+3. Suspending the vm fails, and the error message is:
+    libxl: error: libxl_qmp.c:429:qmp_next: timeout
+
+Problem 1 and 3 don't happen every time. So you can run colo again to
+avoid this problem.
+
+If you have any question when using COLO, please contact me(wency@cn.fujitsu.com).
