@@ -1,18 +1,56 @@
 COLO provides fault tolerance for virtual machines by sending continuous
 checkpoints to a backup, which will activate if the target VM fails. It
-only supports HVM guest(without pv extensions). If you want to use
-OEM released guest os, please use SUSE. REDHAT and Ubuntu is not supported
-now because I don't find any way to disable pv extensions.
+only supports HVM guest(without pv extensions).
+
+Requriements:
+1. Hardware requriements
+   There is at least one directly connected nic to forward the nic from client
+   to secondary vm. The directly connected nic must not be used by any other
+   purpose. If your guest has more than one nic, you should have directly
+   connected nic for each guest nic. If you don't have enouth directly connected
+   nic, you can use vlan.
+2. Dom0 requirements
+   - Support dom0
+   - kernel module:
+        sch_ingress
+        cls_basic
+        cls_tcindex
+        cls_u32
+        act_mirred
+        ifb
+        blktap2
+     Note: Only suse may provide blktap2 module. If your kernel don't have it, you
+     can build it byself:
+     a. Export the symbol zap_page_range() from kernel
+     b. Get the blktap2 source from here:
+        https://github.com/wencongyang/blktap
+   - libnl-tools >= 3.0. This package provides the command nl-qdisc-list, and
+     colo need this command.
+   - If your host os has OEM-released xen tools, please uninstall it first.
+   - You can load the module which is not provided by OEM.
+3. Guest requirements
+   Only HVM guest(without pv extensions) is supported now. If you want to
+   use OEM released guest os, please use SUSE. REDHAT and Ubuntu is not
+   supported now because I don't find any way to disable pv extensions.
+   If you want to use REDHAT or Ubuntu, you need to build the newest
+   kernel which has the parameter xen_nopv.
+
 
 The steps to setup COLO environment:
 1. Build and install xen
-2. Apply the patch for qemu, and rebuild xen tools:
-    http://lists.xenproject.org/archives/html/xen-devel/2014-10/msg02990.html
+2. Apply the patch for qemu xen, and rebuild xen tools:
+    - cd tools/qemu-xen-dir
+    - use git am to apply the patch:
+      <TODO>
+    - make tools && make install-tools
+    Note: You must use qemu-xen. qemu-xen-traditional is not supported.
 3. Install the guest
     3.1 Add "xen_platform_pci=0" into the guest configfile
     3.2 If you use suse, please select physical machine
+    3.3 copy the disk image to the other host
 4. Install COLO agent module:
     4.1 Download COLO agent, and compile it:
+        https://github.com/wencongyang/colo-agen
     4.2 Install it: it is the kernel module, so copy the module to
         the directory /lib/modules/<version>/updates/, and run depmod.
 5. Update your guest config file for COLO:
@@ -20,23 +58,57 @@ The steps to setup COLO environment:
         disk = [ 'format=raw,devtype=disk,access=w,vdev=hda,backendtype=tap,filter=colo,filter-params=192.168.3.1:9000,target=/root/images/hvm/hvm_nopv/hvm.img' ]
     5.2 nic
         vif = [ 'mac=00:16:4f:00:00:11, bridge=br0, model=e1000, forwarddev=eth0' ]
-6. Run COLO:
+    Note:
+    a. The ip/port in filter-params is the secondary host's IP. Don't use the
+       directly connected nic's IP.
+    b. forwarddev is the directly connected nic.
+    c. If you have more than one disk, filter-params must be different
+6. Load the module ifb
+   We need to two ifb nics for each virtual nic, you can load ifb like this:
+      modprobe ifb numifbs=100
+7. Run COLO:
     xl remus -c -u <domname> <secondary host IP>
+    Note: The ip must not be the directly connected nic's IP.
+Note:
+Secondary host only need to do step 1-2.
 
-The COLO agent module doesn't include codes which are experimental and
-improve the performance. The codes are in the branch experimental. If
-you use this branch, you need to load some kernel modules by hand after
-running COLO. The module sch_colo_ipv4 should be loaded before loading
-sch_colo_icmp, sch_colo_tcp and sch_colo_udp.
+Performance:
+1. colo agent
+   The COLO agent module doesn't include codes which are experimental and
+   improve the performance. The codes are in the branch experimental. If
+   you use this branch, you need to load some kernel modules by hand after
+   running COLO. The module sch_colo_ipv4 should be loaded before loading
+   sch_colo_icmp, sch_colo_tcp and sch_colo_udp.
+2. Guest
+   Disable the following tcp option: tcp_sack, tcp_dsack, tcp_timestamps. Add
+   the following lines to /etc/sysctl.conf:
+        net.ipv4.tcp_sack=0
+        net.ipv4.tcp_dsack=0
+        net.ipv4.tcp_timestamps=0
+3. Host
+   - The primary host and secondary host date should be the same
+   - If you build dom's kernel, irqbalance service may not start. COLO uses
+     more than one nic, and you should bind each nic's irq to one cpu.
 
 The known problem:
 1. Secondary vm may crash due to triple fault.
 2. The heartbeat is not reliable. If you want to test the performance,
-   please disable the heartbeat(modify the xen codes)
+   please disable the heartbeat(modify the xen codes). You can use the
+   branch colo-v4-noheartbeat.
 3. Suspending the vm fails, and the error message is:
     libxl: error: libxl_qmp.c:429:qmp_next: timeout
 
 Problem 1 and 3 don't happen every time. So you can run colo again to
 avoid this problem.
 
-If you have any question when using COLO, please contact me(wency@cn.fujitsu.com).
+Example:
+1. If you use sles11.3, you can get the detailed steps from the wiki:
+   <TODO>
+
+Trouble shooting:
+If there's some error happend when staritng COLO, you can do:
+1. Make sure you have all necessary modules that DOM0 needed on both side.
+2. Make sure you have followed all the instructions in this README.
+3. Try to reboot both primary and secondary host.
+4. If you still have problems, collect the error logs and contact
+   Wen Congyang(wency@cn.fujitsu.com) for help.
