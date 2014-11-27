@@ -16,6 +16,10 @@ fi
 
 evalVariables "$@"
 
+# If the queue length is small, some packets may be dropped, and
+# it will affect the performance. 40960 is large enough in my test.
+QUEUE_LENGTH=40960
+
 : ${vifname:?}
 : ${XENBUS_PATH:?}
 : ${forwarddev:?}
@@ -114,6 +118,11 @@ function teardown_ifb()
 
 function setup_primary()
 {
+    do_without_error ip link set dev $IFB_PRIMARY qlen $QUEUE_LENGTH
+    do_without_error ip link set dev $IFB_SECONDARY qlen $QUEUE_LENGTH
+    do_without_error ip link set dev $forwarddev qlen $QUEUE_LENGTH
+    do_without_error ip link set dev $vifname qlen $QUEUE_LENGTH
+
     $LIBEXEC_BIN/colo-tc qdisc add dev $IFB_PRIMARY root handle 1: colo \
         dev $IFB_SECONDARY primary vmid $vmid
     $LIBEXEC_BIN/colo-tc qdisc add dev $IFB_SECONDARY root handle 1: colo \
@@ -132,14 +141,14 @@ function teardown_primary()
 {
     local ifb=
 
-    if xenstore-exits "$XENBUS_PATH/ifb_primary"
+    if xenstore-exists "$XENBUS_PATH/ifb_primary"
     then
         ifb=`xenstore-read "$XENBUS_PATH/ifb_primary" 2>/dev/null || true`
         IFB_PRIMARY=$ifb
         teardown_ifb "$ifb"
     fi
 
-    if xenstore-exits "$XENBUS_PATH/ifb_secondary"
+    if xenstore-exists "$XENBUS_PATH/ifb_secondary"
     then
         ifb=`xenstore-read "$XENBUS_PATH/ifb_secondary" 2>/dev/null || true`
         IFB_SECONDARY=$ifb
@@ -155,6 +164,9 @@ function teardown_primary()
 
 function setup_secondary()
 {
+    do_without_error ip link set dev $forwarddev qlen $QUEUE_LENGTH
+    do_without_error ip link set dev $vifname qlen $QUEUE_LENGTH
+
     redirect_nic_traffic $forwarddev $vifname
     redirect_nic_traffic $vifname $forwarddev
 
