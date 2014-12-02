@@ -41,7 +41,7 @@ The steps to setup COLO environment:
 2. Apply the patch for qemu xen, and rebuild xen tools:
     - cd tools/qemu-xen-dir
     - use git am to apply the patch:
-      <TODO>
+      https://raw.githubusercontent.com/wencongyang/colo-files/master/patch_for_qemu/0001-Introduce-xen-load-devices-state.patch
     - make tools && make install-tools
     Note: You must use qemu-xen. qemu-xen-traditional is not supported.
 3. Install the guest
