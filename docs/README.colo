@@ -101,6 +101,21 @@ The known problem:
 Problem 1 and 3 don't happen every time. So you can run colo again to
 avoid this problem.
 
+Virtio-Net:
+1. If you want to get better performance, you can use virtio-net. qemu-xen-unstable
+   has some problems, so you can use the newest qemu, and apply the patch for qemu.
+   You can get the qemu I used from github:
+   https://github.com/wencongyang/qemu-colo/tree/xen-colo
+2. Build the qemu
+   - ./configure --enable-xen --target-list=i386-softmmu \
+           --extra-cflags="-I$path_to_xen_source/tools/include \
+           -I$path_to_xen_source/tools/libxc -I$path_to_xen_source/tools/xenstore" \
+           --extra-ldflags="-L$path_to_xen_source/tools/libxc -L$path_to_xen_source/tools/xenstore"
+   - make
+3. Update you guest config file:
+   device_model_version="qemu-xen"
+   device_model_override="/usr/local/bin/qemu-system-x86_64"
+
 Example:
 1. If you use sles11.3, you can get the detailed steps from the wiki:
    <TODO>
