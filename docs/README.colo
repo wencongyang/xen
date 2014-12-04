@@ -118,7 +118,7 @@ Virtio-Net:
 
 Example:
 1. If you use sles11.3, you can get the detailed steps from the wiki:
-   <TODO>
+   http://wiki.xen.org/wiki/COLO_-_Coarse_Grain_Lock_Stepping_SLES
 
 Trouble shooting:
 If there's some error happend when staritng COLO, you can do:
