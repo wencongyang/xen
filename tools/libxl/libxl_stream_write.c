@@ -49,6 +49,13 @@
  *  - if (hvm)
  *      - Emulator context record
  *  - Checkpoint end record
+ *
+ * For back channel stream:
+ * - libxl__stream_write_start()
+ *    - Set up the stream to running state
+ *
+ * - Add a new API to write the record. When the record is written
+ *   out, call stream->checkpoint_callback() to return.
  */
 
 /* Success/error/cleanup handling. */
@@ -225,6 +232,15 @@ void libxl__stream_write_start(libxl__egc *egc,
 
     stream->running = true;
 
+    dc->ao        = ao;
+    dc->readfd    = -1;
+    dc->copywhat  = "save v2 stream";
+    dc->writefd   = stream->fd;
+    dc->maxsz     = -1;
+
+    if (stream->back_channel)
+        return;
+
     if (dss->type == LIBXL_DOMAIN_TYPE_HVM) {
         stream->device_model_version =
             libxl__device_model_version_running(gc, dss->domid);
@@ -249,12 +265,7 @@ void libxl__stream_write_start(libxl__egc *egc,
         stream->emu_sub_hdr.index = 0;
     }
 
-    dc->ao        = ao;
-    dc->readfd    = -1;
     dc->writewhat = "stream header";
-    dc->copywhat  = "save v2 stream";
-    dc->writefd   = stream->fd;
-    dc->maxsz     = -1;
     dc->callback  = stream_header_done;
 
     rc = libxl__datacopier_start(dc);
@@ -279,6 +290,7 @@ void libxl__stream_write_start_checkpoint(libxl__egc *egc,
 {
     assert(stream->running);
     assert(!stream->in_checkpoint);
+    assert(!stream->back_channel);
     stream->in_checkpoint = true;
 
     write_emulator_xenstore_record(egc, stream);
@@ -590,7 +602,9 @@ static void stream_done(libxl__egc *egc,
         libxl__carefd_close(stream->emu_carefd);
     free(stream->emu_body);
 
-    check_all_finished(egc, stream, rc);
+    if (!stream->back_channel)
+        /* back channel stream doesn't have save helper */
+        check_all_finished(egc, stream, rc);
 }
 
 static void checkpoint_done(libxl__egc *egc,
