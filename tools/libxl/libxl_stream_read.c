@@ -118,6 +118,15 @@
  *    record, and therefore the buffered state is inconsistent. In
  *    libxl__xc_domain_restore_done(), we just complete the stream and
  *    stream->completion_callback() will be called to resume the guest
+ *
+ * For back channel stream:
+ * - libxl__stream_read_start()
+ *    - Set up the stream to running state
+ *
+ * - libxl__stream_read_continue()
+ *     - Set up reading the next record from a started stream.
+ *       Add some codes to process_record() to handle the record.
+ *       Then call stream->checkpoint_callback() to return.
  */
 
 /* Success/error/cleanup handling. */
@@ -221,6 +230,17 @@ void libxl__stream_read_start(libxl__egc *egc,
     stream->running = true;
     stream->phase   = SRS_PHASE_NORMAL;
 
+    dc->ao       = stream->ao;
+    dc->copywhat = "restore v2 stream";
+    dc->writefd  = -1;
+
+    if (stream->back_channel) {
+        assert(!stream->legacy);
+
+        dc->readfd = stream->fd;
+        return;
+    }
+
     if (stream->legacy) {
         /* Convert the legacy stream. */
         libxl__conversion_helper_state *chs = &stream->chs;
@@ -243,10 +263,7 @@ void libxl__stream_read_start(libxl__egc *egc,
     }
     /* stream->fd is now a v2 stream. */
 
-    dc->ao       = stream->ao;
-    dc->copywhat = "restore v2 stream";
     dc->readfd   = stream->fd;
-    dc->writefd  = -1;
 
     /* Start reading the stream header. */
     rc = setup_read(stream, "stream header",
@@ -762,7 +779,9 @@ static void stream_done(libxl__egc *egc,
     LIBXL_STAILQ_FOREACH_SAFE(rec, &stream->record_queue, entry, trec)
         free_record(rec);
 
-    check_all_finished(egc, stream, rc);
+    if (!stream->back_channel)
+        /* back channel stream doesn't have restore helper */
+        check_all_finished(egc, stream, rc);
 }
 
 void libxl__xc_domain_restore_done(libxl__egc *egc, void *dcs_void,
