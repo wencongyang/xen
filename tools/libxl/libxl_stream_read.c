@@ -166,6 +166,10 @@ static void write_emulator_done(libxl__egc *egc,
                                 libxl__datacopier_state *dc,
                                 int rc, int onwrite, int errnoval);
 
+/* Handlers for checkpoint state mini-loop */
+static void checkpoint_state_done(libxl__egc *egc,
+                                  libxl__stream_read_state *stream, int rc);
+
 /*----- Helpers -----*/
 
 /* Helper to set up reading some data from the stream. */
@@ -549,6 +553,7 @@ static bool process_record(libxl__egc *egc,
     STATE_AO_GC(stream->ao);
     libxl__domain_create_state *dcs = stream->dcs;
     libxl__sr_record_buf *rec;
+    libxl_sr_checkpoint_state *srcs;
     bool further_action_needed = false;
     int rc = 0;
 
@@ -617,6 +622,17 @@ static bool process_record(libxl__egc *egc,
             goto err;
         }
         checkpoint_done(egc, stream, 0);
+        break;
+
+    case REC_TYPE_CHECKPOINT_STATE:
+        if (!stream->in_checkpoint_state) {
+            LOG(ERROR, "Unexpected CHECKPOINT_STATE record in stream");
+            rc = ERROR_FAIL;
+            goto err;
+        }
+
+        srcs = rec->body;
+        checkpoint_state_done(egc, stream, srcs->id);
         break;
 
     default:
@@ -730,6 +746,21 @@ static void stream_complete(libxl__egc *egc,
         return;
     }
 
+    if (stream->in_checkpoint_state) {
+        assert(rc);
+
+        /*
+         * If an error is encountered while in a checkpoint, pass it
+         * back to libxc.  The failure will come back around to us via
+         * 1. normal stream
+         *    libxl__xc_domain_restore_done()
+         * 2. back_channel stream
+         *    libxl__stream_read_abort()
+         */
+        checkpoint_state_done(egc, stream, rc);
+        return;
+    }
+
     stream_done(egc, stream, rc);
 }
 
@@ -760,6 +791,7 @@ static void stream_done(libxl__egc *egc,
 
     assert(stream->running);
     assert(!stream->in_checkpoint);
+    assert(!stream->in_checkpoint_state);
     stream->running = false;
 
     if (stream->incoming_record)
@@ -881,7 +913,30 @@ static void check_all_finished(libxl__egc *egc,
         libxl__conversion_helper_inuse(&stream->chs))
         return;
 
-    stream->completion_callback(egc, stream, stream->rc);
+    if (stream->completion_callback)
+        /* back channel stream doesn't have completion_callback() */
+        stream->completion_callback(egc, stream, stream->rc);
+}
+
+/*----- Checkpoint state handlers -----*/
+
+void libxl__stream_read_checkpoint_state(libxl__egc *egc,
+                                         libxl__stream_read_state *stream)
+{
+    assert(stream->running);
+    assert(!stream->in_checkpoint);
+    assert(!stream->in_checkpoint_state);
+    stream->in_checkpoint_state = true;
+
+    setup_read_record(egc, stream);
+}
+
+static void checkpoint_state_done(libxl__egc *egc,
+                                  libxl__stream_read_state *stream, int rc)
+{
+    assert(stream->in_checkpoint_state);
+    stream->in_checkpoint_state = false;
+    stream->checkpoint_callback(egc, stream, rc);
 }
 
 /*
