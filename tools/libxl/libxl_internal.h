@@ -3506,6 +3506,10 @@ _hidden void libxl__domain_suspend(libxl__egc *egc,
 /* used by libxc to suspend the guest during migration */
 _hidden void libxl__domain_suspend_callback(void *data);
 
+/* Remus callbacks for restore */
+_hidden void remus_checkpoint_stream_written(
+    libxl__egc *egc, libxl__stream_write_state *sws, int rc);
+
 
 /*
  * Convenience macros.

@@ -1569,8 +1569,6 @@ out:
 
 /*----- remus asynchronous checkpoint callback -----*/
 
-static void remus_checkpoint_stream_written(
-    libxl__egc *egc, libxl__stream_write_state *sws, int rc);
 static void remus_devices_commit_cb(libxl__egc *egc,
                                     libxl__remus_devices_state *rds,
                                     int rc);
@@ -1588,7 +1586,7 @@ static void libxl__remus_domain_save_checkpoint_callback(void *data)
     libxl__stream_write_start_checkpoint(egc, &dss->sws);
 }
 
-static void remus_checkpoint_stream_written(
+void remus_checkpoint_stream_written(
     libxl__egc *egc, libxl__stream_write_state *sws, int rc)
 {
     libxl__domain_suspend_state *dss = CONTAINER_OF(sws, *dss, sws);
@@ -1761,7 +1759,6 @@ void libxl__domain_save(libxl__egc *egc, libxl__domain_suspend_state *dss)
         callbacks->suspend = libxl__remus_domain_suspend_callback;
         callbacks->postcopy = libxl__remus_domain_resume_callback;
         callbacks->checkpoint = libxl__remus_domain_save_checkpoint_callback;
-        dss->sws.checkpoint_callback = remus_checkpoint_stream_written;
     } else
         callbacks->suspend = libxl__domain_suspend_callback;
 

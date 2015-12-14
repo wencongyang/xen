@@ -917,6 +917,8 @@ static void libxl__remus_setup(libxl__egc *egc,
     rds->domid = dss->domid;
     rds->callback = remus_setup_done;
 
+    dss->sws.checkpoint_callback = remus_checkpoint_stream_written;
+
     libxl__remus_devices_setup(egc, rds);
     return;
 
