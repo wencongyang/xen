@@ -518,6 +518,26 @@ int libxl__restore_emulator_xenstore_data(libxl__domain_create_state *dcs,
     return rc;
 }
 
+int libxl__domain_restore_device_model(libxl__gc *gc, uint32_t domid,
+                                       const char *restore_file)
+{
+    int rc;
+
+    switch (libxl__device_model_version_running(gc, domid)) {
+    case LIBXL_DEVICE_MODEL_VERSION_QEMU_XEN_TRADITIONAL:
+        /* Will never be supported. */
+        rc = ERROR_INVAL;
+        break;
+    case LIBXL_DEVICE_MODEL_VERSION_QEMU_XEN:
+        rc = libxl__qmp_restore(gc, domid, restore_file);
+        break;
+    default:
+        rc = ERROR_INVAL;
+    }
+
+    return rc;
+}
+
 /*
  * Local variables:
  * mode: C
