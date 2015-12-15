@@ -21,4 +21,10 @@ extern void libxl__colo_restore_setup(libxl__egc *egc,
 extern void libxl__colo_restore_teardown(libxl__egc *egc, void *dcs_void,
                                          int ret, int retval, int errnoval);
 
+extern void libxl__colo_save_setup(libxl__egc *egc,
+                                   libxl__colo_save_state *css);
+extern void libxl__colo_save_teardown(libxl__egc *egc,
+                                      libxl__colo_save_state *css,
+                                      int rc);
+
 #endif
