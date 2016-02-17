@@ -2902,6 +2902,8 @@ int init_subkind_nic(libxl__checkpoint_devices_state *cds);
 void cleanup_subkind_nic(libxl__checkpoint_devices_state *cds);
 int init_subkind_drbd_disk(libxl__checkpoint_devices_state *cds);
 void cleanup_subkind_drbd_disk(libxl__checkpoint_devices_state *cds);
+int init_subkind_qdisk(libxl__checkpoint_devices_state *cds);
+void cleanup_subkind_qdisk(libxl__checkpoint_devices_state *cds);
 
 typedef void libxl__checkpoint_callback(libxl__egc *,
                                         libxl__checkpoint_devices_state *,
@@ -3119,6 +3121,11 @@ struct libxl__colo_save_state {
     libxl__stream_read_state srs;
     void (*callback)(libxl__egc *, libxl__colo_save_state *, int);
     bool svm_running;
+    bool paused;
+
+    /* private, used by qdisk block replication */
+    bool qdisk_used;
+    bool qdisk_setuped;
 };
 
 /*----- Domain suspend (save) state structure -----*/
@@ -3522,6 +3529,12 @@ struct libxl__colo_restore_state {
     /* private, colo restore checkpoint state */
     libxl__domain_create_cb *saved_cb;
     void *crcs;
+
+    /* private, used by qdisk block replication */
+    bool qdisk_used;
+    bool qdisk_setuped;
+    const char *host;
+    const char *port;
 };
 
 struct libxl__domain_create_state {
